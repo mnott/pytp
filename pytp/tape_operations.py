@@ -139,3 +139,26 @@ def backup_directories(drive_name: str, directories: list):
             typer.echo(f"Backup of {directory} completed successfully.")
 
     return "All backups completed."
+
+
+def restore_files(drive_name: str, target_dir: str):
+    tape_details = config_manager.get_tape_drive_details(config_manager.config, drive_name)
+    device_path  = tape_details.get('device_path', None)
+    block_size   = tape_details.get('block_size', 524288)  # Default block size if not specified
+
+    typer.echo(f"Restoring files from {device_path} to {target_dir}...")
+    command = ["tar", "-xvf", device_path, "-b", str(block_size), "-C", target_dir]
+
+    process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+
+    line_count = 0
+    try:
+        for line in process.stdout:
+            print(line, end='')  # Print each line immediately
+            line_count += 1
+    except Exception as e:
+        typer.echo(f"Error occurred during restore of {target_dir}: {backup_result}")
+    finally:
+        process.stdout.close()
+        skip_file_markers(drive_name, 1, False)
+        typer.echo(f"Restore of {target_dir} completed successfully.")
