@@ -64,8 +64,7 @@ def rewind(
     drive_name:  str  = typer.Option("lto9", "--drive", "-d", help="Name of the tape drive"),
 ) -> None:
     """Rewinds the tape."""
-    device_path = config_manager.get_tape_drive_config(config_manager.config, drive_name)
-    result = tape_operations.rewind_tape(device_path)
+    result = tape_operations.rewind_tape(drive_name)
     typer.echo(result)
 
 #
@@ -76,30 +75,45 @@ def init(
     drive_name:  str  = typer.Option("lto9", "--drive", "-d", help="Name of the tape drive"),
 ) -> None:
     """Sets the block size for the specified tape drive."""
-    tape_details = config_manager.get_tape_drive_details(config_manager.config, drive_name)
-    device_path = tape_details.get('device_path')
-    block_size = tape_details.get('block_size', 524288)  # Default block size if not specified
-
-    if not device_path:
-        typer.echo("Tape drive not found.")
-        raise typer.Exit(1)
-
-    result = tape_operations.set_block_size(device_path, block_size)
+    result = tape_operations.init(drive_name)
     typer.echo(result)
 
-
+#
+# Skip File Markers
+#
 @app.command()
 def skip(
-    count: int = typer.Argument(..., help="Number of file markers to skip (positive for forward, negative for backward)"),
+    count: int = typer.Option("1", "--number", "-n",  help="Number of file markers to skip (positive for forward, negative for backward)"),
     drive_name: str = typer.Option("lto9", "--drive", "-d", help="Name of the tape drive"),
 ) -> None:
     """Skips file markers forward or backward on the tape."""
-    device_path = config_manager.get_tape_drive_config(config_manager.config, drive_name)
-    result = tape_operations.skip_file_markers(device_path, count)
+    result = tape_operations.skip_file_markers(drive_name, count)
     typer.echo(result)
 
 
+#
+# List Files
+#
+@app.command()
+def ls(
+    drive_name: str = typer.Option("lto9", "--drive", "-d", help="Name of the tape drive"),
+    sample: Optional[int] = typer.Option(None, help="Number of files to sample from the list"),
+) -> None:
+    """Lists files at the current tape marker."""
+    tape_operations.list_files(drive_name, sample)  # Output is printed directly within the function
 
+
+#
+# Backup Directories
+#
+@app.command()
+def backup(
+    drive_name: str = typer.Option("lto9", "--drive", "-d", help="Name of the tape drive"),
+    directories: List[str] = typer.Argument(..., help="List of directories to backup"),
+):
+    """Backup directories to tape."""
+    result = tape_operations.backup_directories(drive_name, directories)
+    typer.echo(result)
 
 
 #
