@@ -69,6 +69,22 @@ def rewind(
     typer.echo(result)
 
 
+@app.command()
+def init(
+    drive_name:  str  = typer.Option("LTO9", "--drive", "-d", help="Name of the tape drive"),
+) -> None:
+    """Sets the block size for the specified tape drive."""
+    tape_details = config_manager.get_tape_drive_details(config_manager.config, drive_name)
+    device_path = tape_details.get('device_path')
+    block_size = tape_details.get('block_size', 524288)  # Default block size if not specified
+
+    if not device_path:
+        typer.echo("Tape drive not found.")
+        raise typer.Exit(1)
+
+    result = tape_operations.set_block_size(device_path, block_size)
+    typer.echo(result)
+
 #
 # Entry Point
 #
