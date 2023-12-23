@@ -46,12 +46,12 @@ def init(drive_name: str):
     device_path  = tape_details.get('device_path', None)
     block_size   = tape_details.get('block_size', 524288)  # Default block size if not specified
 
-    typer.echo(f"Initializing tape drive {device_path} with block size {block_size}...")
-
     # Rewind the tape first
-    rewind_result = run_command(["mt", "-f", device_path, "rewind"])
+    rewind_result = rewind_tape(drive_name)
     if "Error" in rewind_result:
         return rewind_result  # Return error message if rewind fails
+
+    typer.echo(f"Initializing tape drive {device_path} with block size {block_size}...")
 
     # Set the block size
     return run_command(["mt", "-f", device_path, "setblk", str(block_size)])
