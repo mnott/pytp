@@ -1,0 +1,12 @@
+{
+    "tape_drives": [
+        {
+            "name": "LTO6",
+            "device_path": "/dev/st0"
+        },
+        {
+            "name": "LTO9",
+            "device_path": "/dev/st1"
+        }
+    ]
+}
