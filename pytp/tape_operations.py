@@ -20,3 +20,15 @@ def set_block_size(device_path: str, block_size: int):
     # Set the block size
     return run_command(["mt", "-f", device_path, "setblk", str(block_size)])
 
+
+def skip_file_markers(device_path: str, count: int):
+    if count > 0:
+        # Skip forward
+        command = ["mt", "-f", device_path, "fsf", str(count)]
+    elif count < 0:
+        # Skip backward
+        command = ["mt", "-f", device_path, "bsfm", str(abs(count))]
+    else:
+        return "No movement required."
+
+    return run_command(command)
