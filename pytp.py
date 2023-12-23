@@ -143,6 +143,25 @@ def backup(
     result = tape_operations.backup_directories(drive_name, directories)
     typer.echo(result)
 
+# Alias for the backup command
+app.command(name="b")(backup)
+
+
+#
+# Restore Files
+#
+@app.command()
+def restore(
+    drive_name: str = typer.Option("lto9", "--drive", "-d", help="Name of the tape drive"),
+    target_dir: str = typer.Argument(".", help="Target directory for restored files"),
+):
+    """Restores files from tape to a specified directory."""
+    result = tape_operations.restore_files(drive_name, target_dir)
+    typer.echo(result)
+
+# Alias for the backup command
+app.command(name="r")(restore)
+
 
 #
 # Entry Point
