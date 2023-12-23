@@ -111,7 +111,7 @@ def ff(
 
 @app.command()
 def bb(
-    count     : Optional[int] = typer.Argument(1, help="Number of file markers to skip forward"),
+    count     : Optional[int] = typer.Argument(1, help="Number of file markers to skip backward"),
     drive_name: str = typer.Option("lto9", "--drive", "-d", help="Name of the tape drive"),
 ) -> None:
     """Skips file markers forward or backward on the tape."""
