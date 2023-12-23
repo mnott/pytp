@@ -34,7 +34,7 @@ pretty.install()
 #
 # Our Modules
 #
-from pytp import tape_operations, config_manager
+from pytp import tape_operations
 
 #
 # Command Line Interface
