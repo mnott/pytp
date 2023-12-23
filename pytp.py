@@ -1,6 +1,8 @@
 #!/usr/bin/env python
 # encoding: utf-8
 
+# ptp.py
+
 #
 # Imports
 #
@@ -57,17 +59,6 @@ app = typer.Typer(
 
 
 #
-# Rewind the Tape
-#
-@app.command()
-def rewind(
-    drive_name:  str  = typer.Option("lto9", "--drive", "-d", help="Name of the tape drive"),
-) -> None:
-    """Rewinds the tape."""
-    result = tape_operations.rewind_tape(drive_name)
-    typer.echo(result)
-
-#
 # Initialize the Tape
 #
 @app.command()
@@ -78,16 +69,53 @@ def init(
     result = tape_operations.init(drive_name)
     typer.echo(result)
 
+
+#
+# Show Tape Position
+#
+@app.command()
+def pos(
+    drive_name: str = typer.Option("lto9", "--drive", "-d", help="Name of the tape drive"),
+) -> None:
+    """Shows the current position of the tape."""
+    result = tape_operations.show_tape_position(drive_name)
+    typer.echo(result)
+
+
+#
+# Rewind the Tape
+#
+@app.command()
+def rewind(
+    drive_name:  str  = typer.Option("lto9", "--drive", "-d", help="Name of the tape drive"),
+) -> None:
+    """Rewinds the tape."""
+    result = tape_operations.rewind_tape(drive_name)
+    typer.echo(result)
+
+# Alias for the rewind command
+app.command(name="rew")(rewind)
+
+
 #
 # Skip File Markers
 #
 @app.command()
-def skip(
-    count: int = typer.Option("1", "--number", "-n",  help="Number of file markers to skip (positive for forward, negative for backward)"),
+def ff(
+    count     : Optional[int] = typer.Argument(1, help="Number of file markers to skip forward"),
     drive_name: str = typer.Option("lto9", "--drive", "-d", help="Name of the tape drive"),
 ) -> None:
     """Skips file markers forward or backward on the tape."""
     result = tape_operations.skip_file_markers(drive_name, count)
+    typer.echo(result)
+
+@app.command()
+def bb(
+    count     : Optional[int] = typer.Argument(1, help="Number of file markers to skip forward"),
+    drive_name: str = typer.Option("lto9", "--drive", "-d", help="Name of the tape drive"),
+) -> None:
+    """Skips file markers forward or backward on the tape."""
+    result = tape_operations.skip_file_markers(drive_name, -count)
     typer.echo(result)
 
 
@@ -109,9 +137,9 @@ def ls(
 @app.command()
 def backup(
     drive_name: str = typer.Option("lto9", "--drive", "-d", help="Name of the tape drive"),
-    directories: List[str] = typer.Argument(..., help="List of directories to backup"),
+    directories: List[str] = typer.Argument(..., help="List of directories (or files) to backup"),
 ):
-    """Backup directories to tape."""
+    """Backup directories (or files) to tape."""
     result = tape_operations.backup_directories(drive_name, directories)
     typer.echo(result)
 

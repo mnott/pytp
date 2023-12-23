@@ -1,3 +1,4 @@
+# tape_operations.py
 import subprocess
 import typer
 from pytp import config_manager
@@ -19,10 +20,23 @@ def get_device_path(drive_name: str):
 
     return device_path
 
-def rewind_tape(drive_name: str):
+
+def show_tape_position(drive_name: str):
+    device_path  = get_device_path(drive_name)    
+    status_output = run_command(["mt", "-f", device_path, "status"])
+    file_number_line = next((line for line in status_output.split('\n') if "File number" in line), None)
+    if file_number_line:
+        file_number = file_number_line.split('=')[1].split(',')[0].strip()
+        return int(file_number)
+    else:
+        return 0  # Default to 0 if file number is not found
+
+
+def rewind_tape(drive_name: str, verbose: bool = True):
     device_path  = get_device_path(drive_name)
 
-    typer.echo(f"Rewinding {device_path}...")
+    if verbose:
+        typer.echo(f"Rewinding {device_path}...")
 
     return run_command(["mt", "-f", device_path, "rewind"])
 
@@ -43,17 +57,36 @@ def init(drive_name: str):
     return run_command(["mt", "-f", device_path, "setblk", str(block_size)])
 
 
-def skip_file_markers(drive_name: str, count: int):
+def skip_file_markers(drive_name: str, count: int, verbose: bool = True):
     device_path  = get_device_path(drive_name)
 
-    typer.echo(f"Skipping {count} file markers on {device_path}...")
-     
-    if count > 0:
+    current_position = show_tape_position(drive_name)  # Assume this function returns the current file number
+
+    
+    # Calculate the new position after the skip
+    new_position = current_position + count
+
+    real_count = count
+
+    if count < 0:
+        # If skipping backward, subtract 1 from the count to account for the current position
+        new_position -= 1
+        real_count -= 1
+
+    # If new position is less than 1, perform a rewind instead of a backward skip
+    if new_position < 0:
+        return rewind_tape(drive_name)
+    else:
+        if verbose:
+            typer.echo(f"Skipping {count} file markers from position {current_position} on {device_path}...")
+
+
+    if real_count > 0:
         # Skip forward
-        command = ["mt", "-f", device_path, "fsf", str(count)]
-    elif count < 0:
+        command = ["mt", "-f", device_path, "fsf", str(real_count)]
+    elif real_count < 0:
         # Skip backward
-        command = ["mt", "-f", device_path, "bsf", str(abs(count))]
+        command = ["mt", "-f", device_path, "bsfm", str(abs(real_count))]
     else:
         return "No movement required."
 
@@ -75,10 +108,12 @@ def list_files(drive_name: str, sample: int = None):
             line_count += 1
             if sample and line_count >= sample:
                 break  # Stop after printing the specified number of sample lines
+                
     except Exception as e:
         print(f"Error while reading tape: {e}")
     finally:
         process.stdout.close()
+        skip_file_markers(drive_name, 1, False)
 
 
 def backup_directories(drive_name: str, directories: list):
