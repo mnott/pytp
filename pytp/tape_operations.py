@@ -1,4 +1,5 @@
 # tape_operations.py
+import os
 import subprocess
 import typer
 from pytp import config_manager
@@ -145,6 +146,10 @@ def restore_files(drive_name: str, target_dir: str):
     tape_details = config_manager.get_tape_drive_details(config_manager.config, drive_name)
     device_path  = tape_details.get('device_path', None)
     block_size   = tape_details.get('block_size', 524288)  # Default block size if not specified
+
+    # Create the target directory if it does not exist
+    if not os.path.exists(target_dir):
+        os.makedirs(target_dir, exist_ok=True)
 
     typer.echo(f"Restoring files from {device_path} to {target_dir}...")
     command = ["tar", "-xvf", device_path, "-b", str(block_size), "-C", target_dir]
