@@ -1,7 +1,11 @@
+import os
 import json
 from typing import Dict, Any
 
-CONFIG_PATH = "configs/tapes.json"
+# Calculate the absolute path to the configs directory
+script_dir = os.path.dirname(os.path.realpath(__file__))
+config_dir = os.path.join(script_dir, '../configs')
+config_path = os.path.join(config_dir, 'tapes.json')
 
 def load_config(file_path: str) -> Dict[str, Any]:
     try:
@@ -33,4 +37,4 @@ def get_tape_drive_details(config, drive_name=None):
 
 
 # Load the configuration when the module is imported
-config = load_config(CONFIG_PATH)
+config = load_config(config_path)
