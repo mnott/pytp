@@ -71,15 +71,33 @@ def init(
 
 
 #
+# Show Tape Status
+#
+@app.command()
+def status(
+    drive_name: str = typer.Option("lto9", "--drive", "-d", help="Name of the tape drive"),
+) -> None:
+    """Shows the current position of the tape."""
+    result = tape_operations.show_tape_status(drive_name)
+    typer.echo(result)
+
+# Alias for the status command
+app.command(name="stat")(status)
+
+
+#
 # Show Tape Position
 #
 @app.command()
-def pos(
+def position(
     drive_name: str = typer.Option("lto9", "--drive", "-d", help="Name of the tape drive"),
 ) -> None:
     """Shows the current position of the tape."""
     result = tape_operations.show_tape_position(drive_name)
     typer.echo(result)
+
+# Alias for the rewind command
+app.command(name="pos")(position)
 
 
 #
@@ -161,6 +179,21 @@ def restore(
 
 # Alias for the backup command
 app.command(name="r")(restore)
+
+#
+# Verify
+#
+@app.command()
+def verify(
+    drive_name: str = typer.Option("lto9", "--drive", "-d", help="Name of the tape drive"),
+    directories: List[str] = typer.Argument(..., help="List of directories (or files) that were backed up"),
+):
+    """Verify backup."""
+    result = tape_operations.verify_backup(drive_name, directories)
+    typer.echo(result)
+
+# Alias for the backup command
+app.command(name="v")(verify)
 
 
 #

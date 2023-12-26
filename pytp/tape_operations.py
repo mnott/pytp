@@ -1,7 +1,10 @@
 # tape_operations.py
 import os
 import subprocess
+import shutil
+import tempfile
 import typer
+import hashlib
 from pytp import config_manager
 
 def run_command(command: list):
@@ -21,6 +24,10 @@ def get_device_path(drive_name: str):
 
     return device_path
 
+def show_tape_status(drive_name: str):
+    device_path  = get_device_path(drive_name)    
+    status_output = run_command(["mt", "-f", device_path, "status"])
+    return status_output
 
 def show_tape_position(drive_name: str):
     device_path  = get_device_path(drive_name)    
@@ -108,35 +115,40 @@ def list_files(drive_name: str, sample: int = None):
             print(line, end='')  # Print each line immediately
             line_count += 1
             if sample and line_count >= sample:
+                skip_file_markers(drive_name, -1, False)
                 break  # Stop after printing the specified number of sample lines
                 
     except Exception as e:
         print(f"Error while reading tape: {e}")
     finally:
         process.stdout.close()
-        skip_file_markers(drive_name, 1, False)
+        if not sample:
+            skip_file_markers(drive_name, 1, False)
 
 
 def backup_directories(drive_name: str, directories: list):
     tape_details = config_manager.get_tape_drive_details(config_manager.config, drive_name)
-    device_path  = tape_details.get('device_path', None)
-    block_size   = tape_details.get('block_size', 524288)  # Default block size if not specified
+    device_path = tape_details.get('device_path', None)
+    block_size = tape_details.get('block_size', 524288)  # Default block size if not specified
 
     for directory in directories:
         typer.echo(f"Backing up directory {directory} to {device_path}...")
-        command = ["tar", "-cvf", device_path, "-b", str(block_size), directory]
 
-        process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        backup_command = f"tar -cvf - -b {block_size} {directory} | mbuffer -P 80 -m 6G -s {block_size} -v 2 -o {device_path}"
+        process = subprocess.Popen(backup_command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
-        line_count = 0
+        # Read and print stderr for verbosity
         try:
-            for line in process.stdout:
-                print(line, end='')  # Print each line immediately
-                line_count += 1
+            for line in process.stderr:
+                print(line, end='')
+            process.wait()  # Wait for the process to finish
+            if process.returncode != 0:
+                typer.echo(f"Error occurred during backup of {directory}. Error code: {process.returncode}")
+                continue
         except Exception as e:
-            typer.echo(f"Error occurred during backup of {directory}: {backup_result}")
+            typer.echo(f"Error occurred during backup of {directory}: {e}")
         finally:
-            process.stdout.close()
+            process.stderr.close()
             typer.echo(f"Backup of {directory} completed successfully.")
 
     return "All backups completed."
@@ -167,3 +179,12 @@ def restore_files(drive_name: str, target_dir: str):
         process.stdout.close()
         skip_file_markers(drive_name, 1, False)
         typer.echo(f"Restore of {target_dir} completed successfully.")
+
+
+def generate_checksum(file_path):
+    hash_md5 = hashlib.md5()
+    with open(file_path, "rb") as f:
+        for chunk in iter(lambda: f.read(4096), b""):
+            hash_md5.update(chunk)
+    return hash_md5.hexdigest()
+
