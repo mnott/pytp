@@ -134,7 +134,7 @@ def backup_directories(drive_name: str, directories: list):
     for directory in directories:
         typer.echo(f"Backing up directory {directory} to {device_path}...")
 
-        backup_command = f"tar -cvf - -b {block_size} {directory} | mbuffer -P 80 -m 6G -s {block_size} -v 2 -o {device_path}"
+        backup_command = f"tar -cvf - -b {block_size} {directory} | mbuffer -P 80 -m 12G -s {block_size} -v 1 -o {device_path}"
         process = subprocess.Popen(backup_command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
         # Read and print stderr for verbosity
