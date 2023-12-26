@@ -1,11 +1,14 @@
 # tape_operations.py
 import os
 import subprocess
+import time
 import shutil
 import tempfile
 import typer
 import hashlib
 from pytp import config_manager
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
 
 def run_command(command: list):
     try:
@@ -20,13 +23,29 @@ def get_device_path(drive_name: str):
     if not device_path:
         typer.echo("Tape drive not found.")
         raise typer.Exit(1)
-    
 
     return device_path
+
+def is_tape_ready(drive_name: str) -> bool:
+    """
+    Check if the tape drive is ready for the next operation.
+    """
+    device_path = get_device_path(drive_name)
+    status_output = run_command(["mt", "-f", device_path, "status"])
+
+    # Example checks (you will need to adjust these based on your tape drive's specific responses)
+    if "ONLINE" in status_output:
+        return True  # Drive is ready
+    elif "DRIVE NOT READY" in status_output or "ERROR" in status_output:
+        return False  # Drive is not ready or has encountered an error
+
+    return False  # Default to not ready if none of the conditions match
+
 
 def show_tape_status(drive_name: str):
     device_path  = get_device_path(drive_name)    
     status_output = run_command(["mt", "-f", device_path, "status"])
+    status_output += run_command(["mt", "-f", device_path, "tell"])
     return status_output
 
 def show_tape_position(drive_name: str):
@@ -38,6 +57,22 @@ def show_tape_position(drive_name: str):
         return int(file_number)
     else:
         return 0  # Default to 0 if file number is not found
+
+def show_tape_block(drive_name: str):
+    device_path  = get_device_path(drive_name)    
+    status_output = run_command(["mt", "-f", device_path, "status"])
+    block_number_line = next((line for line in status_output.split('\n') if "Block number" in line), None)
+    if block_number_line:
+        block_number = block_number_line.split('=')[1].split(',')[0].strip()
+        return int(block_number)
+    else:
+        return 0  # Default to 0 if block number is not found
+
+def set_tape_position(drive_name: str, block: int):
+    device_path  = get_device_path(drive_name)    
+    status_output = run_command(["mt", "-f", device_path, "seek", str(block)])
+    position = show_tape_position(drive_name)
+    return position
 
 
 def rewind_tape(drive_name: str, verbose: bool = True):
@@ -126,32 +161,60 @@ def list_files(drive_name: str, sample: int = None):
             skip_file_markers(drive_name, 1, False)
 
 
+import queue
+import threading
+
 def backup_directories(drive_name: str, directories: list):
     tape_details = config_manager.get_tape_drive_details(config_manager.config, drive_name)
     device_path = tape_details.get('device_path', None)
-    block_size = tape_details.get('block_size', 524288)  # Default block size if not specified
+    block_size = tape_details.get('block_size', 524288)  # Default block size
 
-    for directory in directories:
-        typer.echo(f"Backing up directory {directory} to {device_path}...")
+    # Use temp_dir from the default_config
+    temp_dir_root = config_manager.default_config.get('temp_dir', '/tmp')
 
-        backup_command = f"tar -cvf - -b {block_size} {directory} | mbuffer -P 80 -m 12G -s {block_size} -v 1 -o {device_path}"
-        process = subprocess.Popen(backup_command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    tar_queue = queue.Queue()
+    stop_signal = object()
 
-        # Read and print stderr for verbosity
-        try:
+    def create_tar():
+        for directory in directories:
+            dir_name = os.path.basename(directory)
+            temp_tar_path = os.path.join(temp_dir_root, f"{dir_name}.tar")
+            create_tar_command = f"tar -cvf {temp_tar_path} -b {block_size} {directory}"
+            subprocess.run(create_tar_command, shell=True, check=True)
+            tar_queue.put(temp_tar_path)
+
+        tar_queue.put(stop_signal)  # Signal that all tars are created
+
+    def write_to_tape():
+        while True:
+            temp_tar_path = tar_queue.get()
+            if temp_tar_path == stop_signal:
+                break  # All tars are processed
+
+            write_to_tape_command = f"mbuffer -P 80 -m 8G -s {block_size} -i {temp_tar_path} -o {device_path}"
+            process = subprocess.Popen(write_to_tape_command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             for line in process.stderr:
                 print(line, end='')
-            process.wait()  # Wait for the process to finish
+            process.wait()
             if process.returncode != 0:
-                typer.echo(f"Error occurred during backup of {directory}. Error code: {process.returncode}")
-                continue
-        except Exception as e:
-            typer.echo(f"Error occurred during backup of {directory}: {e}")
-        finally:
-            process.stderr.close()
-            typer.echo(f"Backup of {directory} completed successfully.")
+                typer.echo(f"Error occurred during writing {temp_tar_path} to tape. Error code: {process.returncode}")
+
+            os.remove(temp_tar_path)  # Clean up the tar file
+
+    # Start tar creation and writing in separate threads
+    create_tar_thread = threading.Thread(target=create_tar)
+    write_to_tape_thread = threading.Thread(target=write_to_tape)
+
+    create_tar_thread.start()
+    write_to_tape_thread.start()
+
+    create_tar_thread.join()
+    write_to_tape_thread.join()
 
     return "All backups completed."
+
+
+
 
 
 def restore_files(drive_name: str, target_dir: str):

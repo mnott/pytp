@@ -10,6 +10,7 @@ import warnings
 import json
 import datetime
 
+import os
 from os import path
 from sqlalchemy import create_engine, text, update, MetaData, Table, Column, Numeric, Integer, VARCHAR, bindparam, insert, select, and_
 from sqlalchemy.sql import update
@@ -63,7 +64,7 @@ app = typer.Typer(
 #
 @app.command()
 def init(
-    drive_name:  str  = typer.Option("lto9", "--drive", "-d", help="Name of the tape drive"),
+    drive_name: str = typer.Option(os.environ.get('PYTP_DEV', 'lto9'), "--drive", "-d", help="Name of the tape drive"),
 ) -> None:
     """Sets the block size for the specified tape drive."""
     result = tape_operations.init(drive_name)
@@ -75,7 +76,7 @@ def init(
 #
 @app.command()
 def status(
-    drive_name: str = typer.Option("lto9", "--drive", "-d", help="Name of the tape drive"),
+    drive_name: str = typer.Option(os.environ.get('PYTP_DEV', 'lto9'), "--drive", "-d", help="Name of the tape drive"),
 ) -> None:
     """Shows the current position of the tape."""
     result = tape_operations.show_tape_status(drive_name)
@@ -90,7 +91,7 @@ app.command(name="stat")(status)
 #
 @app.command()
 def position(
-    drive_name: str = typer.Option("lto9", "--drive", "-d", help="Name of the tape drive"),
+    drive_name: str = typer.Option(os.environ.get('PYTP_DEV', 'lto9'), "--drive", "-d", help="Name of the tape drive"),
 ) -> None:
     """Shows the current position of the tape."""
     result = tape_operations.show_tape_position(drive_name)
@@ -101,11 +102,31 @@ app.command(name="pos")(position)
 
 
 #
+# Set / Show Tape Block Position
+#
+@app.command()
+def goto(
+    block     : Optional[int] = typer.Argument(None, help="Block to go to"),
+    drive_name: str = typer.Option(os.environ.get('PYTP_DEV', 'lto9'), "--drive", "-d", help="Name of the tape drive"),
+) -> None:
+    """Shows the current position of the tape."""
+    if block is not None:
+        print(f"Moving to block {block}...")
+        result = tape_operations.set_tape_position(drive_name, block)
+    else:
+        result = tape_operations.show_tape_block(drive_name)
+    typer.echo(result)
+
+# Alias for the rewind command
+app.command(name="g")(goto)
+
+
+#
 # Rewind the Tape
 #
 @app.command()
 def rewind(
-    drive_name:  str  = typer.Option("lto9", "--drive", "-d", help="Name of the tape drive"),
+    drive_name: str = typer.Option(os.environ.get('PYTP_DEV', 'lto9'), "--drive", "-d", help="Name of the tape drive"),
 ) -> None:
     """Rewinds the tape."""
     result = tape_operations.rewind_tape(drive_name)
@@ -121,7 +142,7 @@ app.command(name="rew")(rewind)
 @app.command()
 def ff(
     count     : Optional[int] = typer.Argument(1, help="Number of file markers to skip forward"),
-    drive_name: str = typer.Option("lto9", "--drive", "-d", help="Name of the tape drive"),
+    drive_name: str = typer.Option(os.environ.get('PYTP_DEV', 'lto9'), "--drive", "-d", help="Name of the tape drive"),
 ) -> None:
     """Skips file markers forward or backward on the tape."""
     result = tape_operations.skip_file_markers(drive_name, count)
@@ -130,7 +151,7 @@ def ff(
 @app.command()
 def bb(
     count     : Optional[int] = typer.Argument(1, help="Number of file markers to skip backward"),
-    drive_name: str = typer.Option("lto9", "--drive", "-d", help="Name of the tape drive"),
+    drive_name: str = typer.Option(os.environ.get('PYTP_DEV', 'lto9'), "--drive", "-d", help="Name of the tape drive"),
 ) -> None:
     """Skips file markers forward or backward on the tape."""
     result = tape_operations.skip_file_markers(drive_name, -count)
@@ -142,7 +163,7 @@ def bb(
 #
 @app.command()
 def ls(
-    drive_name: str = typer.Option("lto9", "--drive", "-d", help="Name of the tape drive"),
+    drive_name: str = typer.Option(os.environ.get('PYTP_DEV', 'lto9'), "--drive", "-d", help="Name of the tape drive"),
     sample: Optional[int] = typer.Option(None, help="Number of files to sample from the list"),
 ) -> None:
     """Lists files at the current tape marker."""
@@ -154,7 +175,7 @@ def ls(
 #
 @app.command()
 def backup(
-    drive_name: str = typer.Option("lto9", "--drive", "-d", help="Name of the tape drive"),
+    drive_name: str = typer.Option(os.environ.get('PYTP_DEV', 'lto9'), "--drive", "-d", help="Name of the tape drive"),
     directories: List[str] = typer.Argument(..., help="List of directories (or files) to backup"),
 ):
     """Backup directories (or files) to tape."""
@@ -170,7 +191,7 @@ app.command(name="b")(backup)
 #
 @app.command()
 def restore(
-    drive_name: str = typer.Option("lto9", "--drive", "-d", help="Name of the tape drive"),
+    drive_name: str = typer.Option(os.environ.get('PYTP_DEV', 'lto9'), "--drive", "-d", help="Name of the tape drive"),
     target_dir: str = typer.Argument(".", help="Target directory for restored files"),
 ):
     """Restores files from tape to a specified directory."""
@@ -185,7 +206,7 @@ app.command(name="r")(restore)
 #
 @app.command()
 def verify(
-    drive_name: str = typer.Option("lto9", "--drive", "-d", help="Name of the tape drive"),
+    drive_name: str = typer.Option(os.environ.get('PYTP_DEV', 'lto9'), "--drive", "-d", help="Name of the tape drive"),
     directories: List[str] = typer.Argument(..., help="List of directories (or files) that were backed up"),
 ):
     """Verify backup."""
