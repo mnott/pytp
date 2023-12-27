@@ -45,7 +45,8 @@ def get_tape_drive_details(config, drive_name=None):
         # Return the default drive details if no name is provided
         return config.get('tape_drives', [{}])[0]
 
-
+def get_temp_dir():
+    return default_config.get('temp_dir', '.')
 
 # Load the configuration when the module is imported
 config = load_config(config_path)

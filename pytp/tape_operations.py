@@ -1,11 +1,18 @@
 # tape_operations.py
+
+import sys
 import os
+
+
 import subprocess
 import shutil
 import tempfile
 import typer
 import hashlib
 from pytp import config_manager
+import signal
+
+from .tape_operations_backup import TapeBackup
 
 def run_command(command: list):
     try:
@@ -163,36 +170,15 @@ def backup_directories(drive_name: str, directories: list):
     tape_details = config_manager.get_tape_drive_details(config_manager.config, drive_name)
     device_path = tape_details.get('device_path', None)
     block_size = tape_details.get('block_size', 524288)  # Default block size if not specified
+    temp_dir_root = config_manager.get_temp_dir()
+    max_concurrent_tars = 5  # Or any number you see fit
 
-    for directory in directories:
-        typer.echo(f"Backing up directory {directory} to {device_path}...")
+    tape_backup = TapeBackup(device_path, block_size, max_concurrent_tars, temp_dir_root)
 
-        backup_command = f"tar -cvf - -b {block_size} {directory} | mbuffer -P 90 -m 12G -s {block_size} -v 1 -o {device_path}"
-        process = subprocess.Popen(backup_command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    # Set up signal handling
+    signal.signal(signal.SIGINT, lambda sig, frame: tape_backup.cleanup_temp_files())
 
-        # Read and print stderr for verbosity
-        try:
-            for line in process.stderr:
-                if not line.endswith('\n'):
-                    line += '\n'
-                print(line, end='')
-            process.wait()  # Wait for the process to finish
-            if process.returncode != 0:
-                typer.echo(f"Error occurred during backup of {directory}. Error code: {process.returncode}")
-                continue
-        except Exception as e:
-            typer.echo(f"Error occurred during backup of {directory}: {e}")
-        finally:
-            process.stderr.close()
-            typer.echo(f"Backup of {directory} completed successfully.")
-
-    return "All backups completed."
-
-
-
-
-
-
+    tape_backup.backup_directories(directories)
 
 
 def restore_files(drive_name: str, target_dir: str):
