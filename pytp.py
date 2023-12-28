@@ -6,12 +6,16 @@
 #
 # Imports
 #
+# Standard library imports for warnings, OS operations, date and time handling, and JSON processing.
 import warnings
-import json
-import datetime
-
 import os
-from os import path
+import datetime
+import json
+
+#
+# SQL Alchemy / Database
+#
+# Importing necessary components from SQLAlchemy for database operations.
 from sqlalchemy import create_engine, text, update, MetaData, Table, Column, Numeric, Integer, VARCHAR, bindparam, insert, select, and_
 from sqlalchemy.sql import update
 from sqlalchemy.orm import sessionmaker
@@ -19,38 +23,43 @@ from sqlalchemy.orm import sessionmaker
 #
 # More Beautiful Tracebacks and Pretty Printing
 #
+# Importing modules for enhancing the display of tracebacks and pretty-printing in terminal.
 from rich import print
-#from rich import traceback
+#from rich import traceback # Uncomment if traceback customization is needed
 import traceback
 from rich.traceback import Traceback
+from rich.progress  import Progress
+from rich.console   import Console
+from rich.color     import Color
+from rich.style     import Style
 from rich import pretty
-from rich.progress import Progress
-from rich.console import Console
-from rich.color import Color
-from rich.style import Style
-import rich.table # used to print a table
-pretty.install()
-#traceback.install()
+import rich.table
+pretty.install()      # Automatically makes built-in Python pretty printer output more readable
+#traceback.install()  # Uncomment to use Rich's traceback for better error visibility
+
 
 #
 # Our Modules
 #
-from pytp import tape_operations
+# Importing our custom module for tape operations.
+from pytp.tape_operations import TapeOperations
+
 
 #
 # Command Line Interface
 #
+# Typer is used for creating a command-line interface. Typing is used for type annotations.
 from typing import List, Optional
 import typer
 
 app = typer.Typer(
-    add_completion = False,
-    rich_markup_mode = "rich",
-    no_args_is_help=True,
-    help="CCEM EOB Tracker CLI",
-    epilog="""
+    add_completion = False,                   # Disables shell completion setup prompt
+    rich_markup_mode = "rich",                # Enables rich text formatting in help messages
+    no_args_is_help=True,                     # Displays help message when no arguments are provided
+    help="PyTP: Python Tape Backup Utility",  # General description of the CLI utility
+    epilog=""" 
     To get help about the cli, call it with the --help option.
-    """
+    """  # Additional information displayed at the end of the help message
 )
 
 
@@ -66,8 +75,19 @@ app = typer.Typer(
 def init(
     drive_name: str = typer.Option(os.environ.get('PYTP_DEV', 'lto9'), "--drive", "-d", help="Name of the tape drive"),
 ) -> None:
-    """Sets the block size for the specified tape drive."""
-    result = tape_operations.init(drive_name)
+    """
+    Sets the block size for the specified tape drive.
+    
+    This function initializes a TapeOperations object with the given drive name and then
+    calls its 'init' method to set the tape drive's block size. It outputs the result
+    of the operation to the console.
+    
+    Args:
+        drive_name (str): The name of the tape drive to be initialized. This name is used
+                          to fetch the drive's configuration details. The default value is taken
+                          from the environment variable 'PYTP_DEV' or defaults to 'lto9'.
+    """
+    result = TapeOperations(drive_name).init()
     typer.echo(result)
 
 
@@ -78,8 +98,20 @@ def init(
 def status(
     drive_name: str = typer.Option(os.environ.get('PYTP_DEV', 'lto9'), "--drive", "-d", help="Name of the tape drive"),
 ) -> None:
-    """Shows the current position of the tape."""
-    result = tape_operations.show_tape_status(drive_name)
+    """
+    Shows the current status of the tape drive.
+    
+    This function creates an instance of the TapeOperations class and invokes its
+    'show_tape_status' method to retrieve and display the current status of the tape drive.
+    This includes information like the tape's position, online/offline status, and other
+    relevant details.
+
+    Args:
+        drive_name (str): The name of the tape drive to be initialized. This name is used
+                          to fetch the drive's configuration details. The default value is taken
+                          from the environment variable 'PYTP_DEV' or defaults to 'lto9'.
+    """
+    result = TapeOperations(drive_name).show_tape_status()
     typer.echo(result)
 
 # Alias for the status command
@@ -93,8 +125,19 @@ app.command(name="stat")(status)
 def position(
     drive_name: str = typer.Option(os.environ.get('PYTP_DEV', 'lto9'), "--drive", "-d", help="Name of the tape drive"),
 ) -> None:
-    """Shows the current position of the tape."""
-    result = tape_operations.show_tape_position(drive_name)
+    """
+    Displays the current position of the tape in the specified tape drive.
+    
+    This function utilizes the TapeOperations class to interact with the tape drive.
+    It calls the 'show_tape_position' method of the class, which returns the current position
+    of the tape (file number), providing insight into where the tape head is located.
+
+    Args:
+        drive_name (str): The name of the tape drive to be initialized. This name is used
+                          to fetch the drive's configuration details. The default value is taken
+                          from the environment variable 'PYTP_DEV' or defaults to 'lto9'.
+    """
+    result = TapeOperations(drive_name).show_tape_position()
     typer.echo(result)
 
 # Alias for the rewind command
@@ -109,12 +152,25 @@ def goto(
     block     : Optional[int] = typer.Argument(None, help="Block to go to"),
     drive_name: str = typer.Option(os.environ.get('PYTP_DEV', 'lto9'), "--drive", "-d", help="Name of the tape drive"),
 ) -> None:
-    """Shows the current position of the tape."""
+    """
+    Sets or shows the current block position of the tape in the specified tape drive.
+
+    If a block number is provided, the tape is moved to that block position.
+    If no block number is given, the current block position of the tape is displayed.
+    This function uses the TapeOperations class for tape drive interactions.
+
+    Args:
+        block (int, optional): The block number to set the tape position to. If None, 
+                               the current tape block position is returned instead.
+        drive_name      (str): The name of the tape drive to be initialized. This name is used
+                               to fetch the drive's configuration details. The default value is taken
+                               from the environment variable 'PYTP_DEV' or defaults to 'lto9'.
+    """
     if block is not None:
         print(f"Moving to block {block}...")
-        result = tape_operations.set_tape_position(drive_name, block)
+        result = TapeOperations(drive_name).set_tape_position(block)
     else:
-        result = tape_operations.show_tape_block(drive_name)
+        result = TapeOperations(drive_name).show_tape_block()
     typer.echo(result)
 
 # Alias for the rewind command
@@ -128,8 +184,19 @@ app.command(name="g")(goto)
 def rewind(
     drive_name: str = typer.Option(os.environ.get('PYTP_DEV', 'lto9'), "--drive", "-d", help="Name of the tape drive"),
 ) -> None:
-    """Rewinds the tape."""
-    result = tape_operations.rewind_tape(drive_name)
+    """
+    Rewinds the tape to the beginning in the specified tape drive.
+
+    This function is responsible for sending the rewind command to the tape drive,
+    ensuring that the tape is positioned at the beginning. It uses the TapeOperations
+    class to interact with the tape drive.
+
+    Args:
+        drive_name (str): The name of the tape drive to be initialized. This name is used
+                          to fetch the drive's configuration details. The default value is taken
+                          from the environment variable 'PYTP_DEV' or defaults to 'lto9'.
+    """
+    result = TapeOperations(drive_name).rewind_tape()
     typer.echo(result)
 
 # Alias for the rewind command
@@ -137,24 +204,51 @@ app.command(name="rew")(rewind)
 
 
 #
-# Skip File Markers
+# Skip File Markers Forward
 #
 @app.command()
 def ff(
     count     : Optional[int] = typer.Argument(1, help="Number of file markers to skip forward"),
     drive_name: str = typer.Option(os.environ.get('PYTP_DEV', 'lto9'), "--drive", "-d", help="Name of the tape drive"),
 ) -> None:
-    """Skips file markers forward or backward on the tape."""
-    result = tape_operations.skip_file_markers(drive_name, count)
+    """
+    Skips a specified number of file markers forward on the tape in the given tape drive.
+
+    This command advances the tape by the specified number of file markers. It leverages the
+    TapeOperations class to perform the skip operation on the tape drive.
+
+    Args:
+        count (int, optional): The number of file markers to skip forward. Defaults to 1.
+        drive_name      (str): The name of the tape drive to be initialized. This name is used
+                               to fetch the drive's configuration details. The default value is taken
+                               from the environment variable 'PYTP_DEV' or defaults to 'lto9'.
+    """
+    result = TapeOperations(drive_name).skip_file_markers(count)
     typer.echo(result)
 
+
+#
+# Skip File Markers Backward
+#
 @app.command()
 def bb(
     count     : Optional[int] = typer.Argument(1, help="Number of file markers to skip backward"),
     drive_name: str = typer.Option(os.environ.get('PYTP_DEV', 'lto9'), "--drive", "-d", help="Name of the tape drive"),
 ) -> None:
-    """Skips file markers forward or backward on the tape."""
-    result = tape_operations.skip_file_markers(drive_name, -count)
+    """
+    Skips a specified number of file markers backward on the tape in the given tape drive.
+
+    This command rewinds the tape by the specified number of file markers. It leverages the
+    TapeOperations class to perform the skip operation on the tape drive. If it would pass
+    the beginning of the tape based on the current tape position, it rewinds the tape.
+
+    Args:
+        count (int, optional): The number of file markers to skip backward. Defaults to 1.
+        drive_name      (str): The name of the tape drive to be initialized. This name is used
+                               to fetch the drive's configuration details. The default value is taken
+                               from the environment variable 'PYTP_DEV' or defaults to 'lto9'.
+    """
+    result = TapeOperations(drive_name).skip_file_markers(-count)
     typer.echo(result)
 
 
@@ -166,8 +260,20 @@ def ls(
     drive_name: str = typer.Option(os.environ.get('PYTP_DEV', 'lto9'), "--drive", "-d", help="Name of the tape drive"),
     sample: Optional[int] = typer.Option(None, help="Number of files to sample from the list"),
 ) -> None:
-    """Lists files at the current tape marker."""
-    tape_operations.list_files(drive_name, sample)  # Output is printed directly within the function
+    """
+    Lists files at the current position on the tape in the given tape drive. 
+
+    This command leverages the TapeOperations class to perform the listing operation on the tape drive.
+    It can list all files or a specified number of sample files at the current tape marker.
+
+    Args:
+        sample (int, optional): The number of files to sample from the list. If not specified, 
+                                all files at the current tape marker are listed.
+        drive_name       (str): The name of the tape drive to be initialized. This name is used
+                                to fetch the drive's configuration details. The default value is taken
+                                from the environment variable 'PYTP_DEV' or defaults to 'lto9'.                                
+    """
+    TapeOperations(drive_name).list_files(sample)  # Output is printed directly within the function
 
 
 #
@@ -175,11 +281,40 @@ def ls(
 #
 @app.command()
 def backup(
-    drive_name: str = typer.Option(os.environ.get('PYTP_DEV', 'lto9'), "--drive", "-d", help="Name of the tape drive"),
-    directories: List[str] = typer.Argument(..., help="List of directories (or files) to backup"),
+    drive_name           : str = typer.Option(os.environ.get('PYTP_DEV', 'lto9'), "--drive", "-d", help="Name of the tape drive"),
+    strategy             : str = typer.Option("direct", "--strategy", "-s", help="Backup strategy: direct or tar (via memory buffer), or dd (without memory buffer)"),
+    max_concurrent_tars  : int = typer.Option(2, "--max-concurrent-tars", "-m", help="Maximum number of concurrent tar operations"),      
+    memory_buffer        : int = typer.Option(6, "--memory_buffer", "-mem", help="Memory buffer size in GB"),
+    memory_buffer_percent: int = typer.Option(6, "--memory_buffer_percent", "-memp", help="Fill grade of memory buffer before streaming to tape"),
+    directories:     List[str] = typer.Argument(..., help="List of directories (or files) to backup"),
 ):
-    """Backup directories (or files) to tape."""
-    result = tape_operations.backup_directories(drive_name, directories)
+    """
+    Initiates the backup process for specified directories to the tape drive.
+
+    This function serves as a command line interface to trigger the backup process. It allows users to specify
+    the tape drive, backup strategy, maximum number of concurrent tar operations, and the directories to be backed up.
+
+    Args:
+        drive_name            (str): The name of the tape drive as configured in the system. This is used to fetch the
+                                     device path and other details necessary for the backup operation.
+        strategy              (str): Determines the backup strategy to be used. Options are 'direct', 'tar', or 'dd'.
+                                      - 'direct' streams files directly to the tape using a memory buffer,
+                                      - 'tar'    first creates tar archives then writes them to tape using a memory buffer,
+                                      - 'dd'     also creates tar archives first but writes them using the 'dd' command without a memory buffer.
+        max_concurrent_tars   (int): Specifies the maximum number of tar file operations that can run concurrently.
+                                     This helps to manage system resources and performance during the backup process.
+        memory_buffer         (int): The size of the memory buffer to use for streaming files to tape. This is only
+                                     applicable for the 'direct' and 'tar' strategies.
+        memory_buffer_percent (int): The percentage the memory buffer needs to be filled before streaming to tape.
+        directories     (List[str]): A list of directory paths that need to be backed up. This can include both directories
+                                     and individual files.
+
+    The function leverages the TapeOperations class to handle the backup process. It passes the user-specified parameters
+    to the class methods to ensure the backup is performed as per the chosen strategy and configurations.
+
+    The result of the backup operation (success message or error information) is printed to the console.
+    """
+    result = TapeOperations(drive_name).backup_directories(directories, strategy=strategy, max_concurrent_tars=max_concurrent_tars, memory_buffer=memory_buffer, memory_buffer_percent=memory_buffer_percent)
     typer.echo(result)
 
 # Alias for the backup command
@@ -195,11 +330,12 @@ def restore(
     target_dir: str = typer.Argument(".", help="Target directory for restored files"),
 ):
     """Restores files from tape to a specified directory."""
-    result = tape_operations.restore_files(drive_name, target_dir)
+    result = TapeOperations(drive_name).restore_files(target_dir)
     typer.echo(result)
 
 # Alias for the backup command
 app.command(name="r")(restore)
+
 
 #
 # Verify
@@ -210,7 +346,7 @@ def verify(
     directories: List[str] = typer.Argument(..., help="List of directories (or files) that were backed up"),
 ):
     """Verify backup."""
-    result = tape_operations.verify_backup(drive_name, directories)
+    result = TapeOperations(drive_name).verify_backup(directories)
     typer.echo(result)
 
 # Alias for the backup command
