@@ -68,7 +68,7 @@ Here are some examples of how PyTP can be used:
   pytp ff --drive lto9
   ```
 
-- Go back two file markers:
+- Go forward two file markers:
 
   ```bash
   pytp ff 2 --drive lto9
