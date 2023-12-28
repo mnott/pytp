@@ -220,7 +220,7 @@ class TapeOperations:
             return 0  # Default to 0 if block number is not found
 
 
-    def set_tape_position(self, block: int):
+    def set_tape_block(self, block: int):
         """
         Moves the tape to the specified block position.
 

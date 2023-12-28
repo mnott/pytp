@@ -168,7 +168,7 @@ def goto(
     """
     if block is not None:
         print(f"Moving to block {block}...")
-        result = TapeOperations(drive_name).set_tape_position(block)
+        result = TapeOperations(drive_name).set_tape_block(block)
     else:
         result = TapeOperations(drive_name).show_tape_block()
     typer.echo(result)
