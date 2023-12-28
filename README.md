@@ -98,7 +98,32 @@ Here are some examples of how PyTP can be used:
 
 Basically, just clone the directory, install mt, mtx, mbuffer, tar, dd, and if you have a missing
 Python module like `typer`, try `pip3 install typer`. See also `requirements.txt`. You can also
-just try `./setup.py build` and `./setup.py install`. `./setup.py --help` shows more options.
+use the automated ways:
+
+1. Create a virtual environment (recommended):
+
+```bash
+python -m venv venv
+source venv/bin/activate  # Unix-based
+venv\\Scripts\\activate   # Windows
+```
+
+2. Install the project using pip:
+
+```bash
+pip install .
+```
+
+3. If there are additional dependencies listed in requirements.txt, install them:
+
+```bash
+pip install -r requirements.txt
+```
+
+4. Now you can run the project using the pytp command (or as specified in the project's documentation).
+
+
+
 
 ## Configuration
 
