@@ -1,7 +1,6 @@
 # tape_metadata.py
 import json
 import os
-import tempfile
 
 class TapeMetadata:
     """

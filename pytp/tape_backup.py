@@ -1,5 +1,4 @@
 # tape_backup.py
-import json
 import os
 import tempfile
 import subprocess
