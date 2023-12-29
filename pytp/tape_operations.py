@@ -449,7 +449,7 @@ class TapeOperations:
         The actual backup process is delegated to the TapeBackup class's backup_directories method, which performs
         the backup according to the chosen strategy.
         """
-        tape_backup = TapeBackup(self.device_path, self.block_size, self.tar_dir, self.snapshot_dir, label, strategy, incremental, max_concurrent_tars, memory_buffer, memory_buffer_percent)
+        tape_backup = TapeBackup(self, self.device_path, self.block_size, self.tar_dir, self.snapshot_dir, label, strategy, incremental, max_concurrent_tars, memory_buffer, memory_buffer_percent)
 
         # Set up signal handling
         signal.signal(signal.SIGINT, lambda sig, frame: tape_backup.cleanup_temp_files())

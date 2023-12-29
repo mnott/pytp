@@ -8,6 +8,8 @@ import typer
 import time
 from rich.progress import Progress
 
+from pytp.tape_metadata import TapeMetadata
+
 class TapeBackup:
     """
     The TapeBackup class provides functionalities to backup directories to a tape drive.
@@ -18,26 +20,30 @@ class TapeBackup:
     are written to the tape in the specified order.
 
     Attributes:
-        device_path                (str): Stores the device path of the tape drive.
-        block_size                 (int): Stores the block size.
-        max_concurrent_tars        (int): Stores the maximum number of tar files that can be generated concurrently.
-        tar_dir                    (str): Stores the path of the directory for tar files.
-        label                      (str): Stores the label of the backup.
-        strategy                   (str): Stores the backup strategy to be used (direct or tar (via memory buffer), or dd (without memory buffer)).
-        incremental               (bool): Flag to indicate whether incremental backup is enabled.
-        max_concurrent_tars        (int): The maximum number of concurrent tar operations.
-        memory_buffer              (int): The size of the memory buffer to be used for tar and dd operations.
-        memory_buffer_percent      (int): The percentage the memory buffer needs to be filled before streaming to tape.
-        all_tars_generated        (bool): Flag to indicate whether all tar files have been generated.
-        tars_to_be_generated      (list): List to keep track of tar files that need to be generated.
-        tars_generating            (set): Set to keep track of tar files currently being generated.
-        tars_generated            (list): List to keep track of generated tar files, maintaining their order.
-        tars_to_write             (list): List of tar files that are ready to be written to the tape.
-        generating_lock (threading.Lock): Lock to manage concurrent access to tars_generating.
-        generated_lock  (threading.Lock): Lock to manage concurrent access to tars_generated.
-        to_write_lock   (threading.Lock): Lock to manage concurrent access to tars_to_write.
-        running                   (bool): Flag to control the running state of the backup process.
-        semaphore  (threading.Semaphore): Semaphore to control the number of concurrent tar file generation operations.
+        tape_operations  (TapeOperations): Stores the TapeOperations instance used for tape operations.
+        device_path                 (str): Stores the device path of the tape drive.
+        block_size                  (int): Stores the block size.
+        max_concurrent_tars         (int): Stores the maximum number of tar files that can be generated concurrently.
+        memory_buffer               (int): The size of the memory buffer to be used for tar and dd operations.
+        memory_buffer_percent       (int): The percentage the memory buffer needs to be filled before streaming to tape.
+        tar_dir                     (str): Stores the path of the directory for tar files.
+        snapshot_dir                (str): Stores the path of the directory for snapshot files.
+        label                       (str): Stores the label of the backup.
+        strategy                    (str): Stores the backup strategy to be used (direct or tar (via memory buffer), or dd (without memory buffer)).
+        incremental                (bool): Flag to indicate whether incremental backup is enabled.
+        all_tars_generated         (bool): Flag to indicate whether all tar files have been generated.
+        tars_to_be_generated       (list): List to keep track of tar files that need to be generated.
+        tars_generating             (set): Set to keep track of tar files currently being generated.
+        tars_generated             (list): List to keep track of generated tar files, maintaining their order.
+        tars_to_write              (list): List of tar files that are ready to be written to the tape.
+        generating_lock  (threading.Lock): Lock to manage concurrent access to tars_generating.
+        generated_lock   (threading.Lock): Lock to manage concurrent access to tars_generated.
+        to_write_lock    (threading.Lock): Lock to manage concurrent access to tars_to_write.
+        running                    (bool): Flag to control the running state of the backup process.
+        semaphore   (threading.Semaphore): Semaphore to control the number of concurrent tar file generation operations.
+        progress (rich.progress.Progress): Progress bar to monitor the backup process.
+        metadata           (TapeMetadata): TapeMetadata instance to manage metadata operations.
+        tar_to_directory_mapping   (dict): Maps tar paths to their directories.
 
     The class provides various methods to manage the backup process, including tar file generation, writing to tape, and cleanup.
     """    
@@ -47,11 +53,12 @@ class TapeBackup:
     STRATEGY_TAR    = 'tar'    # creates tar files first, then writes to tape, using memory buffer
     STRATEGY_DD     = 'dd'     # creates tar files first, then writes to tape using dd, without memory buffer
 
-    def __init__(self, device_path, block_size, tar_dir, snapshot_dir, label = None, strategy = "direct", incremental = False, max_concurrent_tars = 2, memory_buffer = 6, memory_buffer_percent = 40):
+    def __init__(self, tape_operations, device_path, block_size, tar_dir, snapshot_dir, label = None, strategy = "direct", incremental = False, max_concurrent_tars = 2, memory_buffer = 6, memory_buffer_percent = 40):
         """
         Initializes the TapeBackup class.
 
         Args:
+            tape_operations (TapeOperations): The TapeOperations instance used for tape operations.
             device_path                (str): The path to the tape drive device.
             block_size                 (int): The block size to be used for tar and dd operations.
             tar_dir                    (str): The root directory where tar files will be stored.
@@ -60,7 +67,8 @@ class TapeBackup:
             label                      (str): The label of the backup.
             memory_buffer              (int): The size of the memory buffer to be used for tar and dd operations.
             memory_buffer_percent      (int): The percentage the memory buffer needs to be filled before streaming to tape.
-        """        
+        """
+        self.tape_operations       = tape_operations    
         self.device_path           = device_path
         self.block_size            = block_size
         self.max_concurrent_tars   = max_concurrent_tars
@@ -82,6 +90,8 @@ class TapeBackup:
         self.running               = True
         self.semaphore             = threading.Semaphore(max_concurrent_tars)
         self.progress              = Progress()
+        self.metadata              = TapeMetadata(tape_operations=self.tape_operations, progress = self.progress, snapshot_dir=self.snapshot_dir, label=self.label)
+        self.tar_to_directory_mapping = {}  # Maps tar paths to their directories
 
 
     def generate_tar_file(self, directory, index):
@@ -95,81 +105,56 @@ class TapeBackup:
         Args:
             directory (str): The directory path to be archived into a tar file.
             index     (int): The index of the directory in the original list of directories. This is used to maintain
-                             the order of tar files consistent with the order of input directories.
+                            the order of tar files consistent with the order of input directories.
 
         Process:
             1. Acquires a semaphore token to limit concurrent tar operations.
             2. Checks if the backup process is still running; exits if not.
-            3. Generates a temporary tar file path and adds it to the tars_generating set.
-            4. Executes the tar command to create the tar file.
-            5. Once the tar file is created, moves it from tars_generating to tars_generated.
-            6. Calls check_and_move_to_write to potentially queue the tar file for writing to tape.
-            7. If this is the last tar file to be generated, sets the all_tars_generated flag to True.
-        """        
+            3. Determines if the directory needs a backup based on the incremental flag and existing backup history.
+            4. If backup is needed, generates a tar file path and adds it to the tars_generating set.
+            5. Executes the tar command to create the tar file and adds the tar path to tars_generated.
+            6. If backup is not needed, removes the corresponding entry from tars_to_be_generated.
+            7. Calls check_and_move_to_write to potentially queue the tar file for writing to tape.
+            8. Checks if all tar files have been generated and sets all_tars_generated flag accordingly.
+        """     
         with self.semaphore:
             if not self.running:
                 return
 
             dir_name = os.path.basename(directory)
             tar_path = os.path.join(self.tar_dir, f"{dir_name}.tar")
-            self.tars_generating.add(tar_path)
 
-            backup_json    = self.get_json_filename(directory, label=self.label)
-            backup_history = self.load_backup_history(backup_json)
+            needs_backup, backup_entry = self.metadata.prepare_backup_entry(directory, self.incremental)
 
-            with self.progress:
-                if self.incremental:
-                    changed_files = self.get_changed_files_list(directory, backup_history)
+            if needs_backup:
+                # Your existing logic to generate tar file...
+    
+                # Write files to be backed up to a list file for tar
+                backup_files_list_path = self.write_files_to_temp_list(backup_entry['files'])
 
-                    if not changed_files:
-                        typer.echo(f"\nNo changes in {directory}, skipping backup.")
-                        return
-                    current_state = self.scan_directory(directory)
-                    incremental_files = {filepath: current_state[filepath] for filepath in changed_files}
-                    backup_entry = {'type': 'incremental', 'files': incremental_files}
-                else:
-                    current_state = self.scan_directory(directory)
-                    backup_entry = {
-                        'files': {
-                            filepath: (
-                                {'mtime': attrs['mtime'], 'size': attrs['size']}
-                                if attrs['type'] == 'file' else
-                                {'type': 'symlink', 'target': attrs.get('target'), 'valid': attrs.get('valid', False)}
-                            )
-                            for filepath, attrs in current_state.items()
-                        }
-                    }
-                    backup_history = []  # Reset history for a full backup
+                # Generate tar file
+                tar_command = ["tar", "-cvf", tar_path, "-T", backup_files_list_path]
+                tar_command.extend(["-b", str(self.block_size)])
+                print(f"Generating tar file for {directory}... {tar_command}")
+                subprocess.run(tar_command)
+                os.remove(backup_files_list_path)
+    
+                # After generating tar file, add the mapping
+                self.tar_to_directory_mapping[tar_path] = directory
 
-            # Update backup history and save JSON
-            backup_history.append(backup_entry)
-            with open(backup_json, 'w') as file:
-                json.dump(backup_history, file)    
-                
-            # Write files to be backed up to a list file for tar
-            files_to_backup = backup_entry['files']
-
-            # Write files to be backed up to a temporary file in self.tar_dir
-            with tempfile.NamedTemporaryFile(mode='w+', dir=self.tar_dir, delete=False) as temp_file:
-                backup_files_list_path = temp_file.name
-                for file in files_to_backup:
-                    temp_file.write(f"{file}\n")            
-
-            tar_command = ["tar", "-cvf", tar_path, "-T", backup_files_list_path]
-            tar_command.extend(["-b", str(self.block_size)])
-            # tar_command = ["tar", "-cvf", tar_path, "-b", str(self.block_size), directory]
-
-            subprocess.run(tar_command)
-            os.remove(backup_files_list_path)  # Remove the temporary file after use
+                with self.generated_lock:
+                    self.tars_generated.append((index, tar_path))
+            else:
+                typer.echo(f"No changes in {directory}, skipping backup.")
+                with self.generated_lock, self.to_write_lock:
+                    self.tars_to_be_generated = [item for item in self.tars_to_be_generated if item[1] != tar_path]                
 
             with self.generating_lock:
-                self.tars_generating.remove(tar_path)
-            with self.generated_lock:
-                self.tars_generated.append((index, tar_path))
+                self.tars_generating.discard(tar_path)
 
             self.check_and_move_to_write()
 
-            if len(self.tars_to_be_generated) == 1:
+            if len(self.tars_to_be_generated) == 0:
                 self.all_tars_generated = True
 
 
@@ -177,27 +162,42 @@ class TapeBackup:
         """
         Writes tar files to the tape drive in the order they were added to the tars_to_write list.
 
-        This method runs in a loop, continuously checking for tar files that are ready to be written.
-        It ensures that tar files are written to tape in the correct order.
+        This method continuously checks for tar files that are ready to be written and writes them 
+        to the tape drive, ensuring that the order of files is maintained as per their generation.
 
         Process:
-            1. The loop runs as long as there are tar files to write or the backup process is still generating tar files.
-            2. Acquires a lock to ensure exclusive access to the tars_to_write list.
-            3. Checks if there are any tar files ready to be written.
-                - If the list is empty, it continues back to the start of the loop.
-            4. Pops the first tar file from the tars_to_write list and writes it to tape.
-            5. After writing, it releases the lock and continues to the next iteration.
-        """        
+            1. Runs a loop as long as there are tar files to write or the backup process is still generating tar files.
+            2. Within the loop, acquires a lock to ensure exclusive access to the tars_to_write list.
+            3. Checks if there are any tar files ready to be written. If not, it skips to the next iteration.
+            4. Pops the first tar file from the tars_to_write list for writing.
+            5. Retrieves the associated directory for the tar file and updates the tape position in the metadata.
+            6. Depending on the backup strategy, writes the tar file to the tape using either mbuffer (tar strategy) 
+            or dd command (dd strategy).
+            7. Continues to the next iteration after the tar file is written to tape.
+
+        This method ensures that the tar files are written to the tape in an orderly manner, following the sequence 
+        in which they were generated. It also updates the tape position in the metadata, ensuring accurate tracking 
+        of where each backup is located on the tape.
+        """     
         while self.tars_to_write or (self.running and not self.all_tars_generated):
             with self.to_write_lock:
                 if not self.tars_to_write:
                     continue
                 tar_to_write = self.tars_to_write.pop(0)
 
-                if self.strategy == self.STRATEGY_TAR:
-                    self.write_to_tape_tar(tar_to_write)
-                elif self.strategy == self.STRATEGY_DD:
-                    self.write_to_tape_dd(tar_to_write)
+                directory = self.tar_to_directory_mapping.get(tar_to_write)
+
+                if directory:
+                    # Update tape position before writing
+                    current_tape_pos = self.tape_operations.show_tape_position()
+                    self.metadata.update_tape_position_and_save(directory, current_tape_pos)
+
+                    if self.strategy == self.STRATEGY_TAR:
+                        self.write_to_tape_tar(tar_to_write)
+                    elif self.strategy == self.STRATEGY_DD:
+                        self.write_to_tape_dd(tar_to_write)
+                else:
+                    typer.echo(f"Error: No directory mapping found for {tar_to_write}")
 
 
     def write_to_tape_tar(self, tar_path):
@@ -411,87 +411,81 @@ class TapeBackup:
         self.cleanup_temp_files()
 
 
-    def backup_directories_direct(self, directories: list):
+    def write_files_to_temp_list(self, files_to_backup):
         """
-        Performs direct backup of directories to tape without pre-generating tar files.
+        Creates a temporary file listing all the files to be backed up.
 
-        This method offers an alternative backup strategy where directories are directly
-        streamed to the tape drive using tar and mbuffer. This approach bypasses the step of
-        pre-generating tar files, thus allowing for a more straightforward and potentially
-        faster backup process for certain use cases - especially when dealing with large files.
-
-        Process:
-        1. Iterates through each directory in the 'directories' list.
-        2. For each directory, constructs a backup command that uses 'tar' to create an archive and pipes it directly to 'mbuffer', which then writes it to the tape device.
-        3. Executes the command and monitors the process, printing the standard error output to the console for real-time feedback.
-        4. Checks for errors upon completion of each backup operation and continues with the next directory.
-        5. Completes the backup process for all directories and returns a completion message.
+        This method takes a list of file paths that are to be included in the backup and writes them 
+        into a temporary file. This file is then used by the tar command to know which files to include 
+        in the tar archive.
 
         Parameters:
-        directories (list): A list of directory paths that need to be backed up.
+        - files_to_backup (list): A list of file paths to be included in the backup.
 
         Returns:
-        str: A message indicating the completion of all backup operations.
+        - str: The path to the temporary file containing the list of files to backup.
 
         Note:
-        This method is designed for scenarios where the immediate writing of data to tape is preferred over
-        the creation of intermediate tar files. It assumes that the tape device and block size have been
-        correctly configured and that the directories listed are valid and accessible.
+        - The temporary file is created in the directory specified for storing tar files.
+        - Each file path is written to a new line in the temporary file.
+        - The temporary file is not automatically deleted and should be removed after it's no longer needed.
         """
+        with tempfile.NamedTemporaryFile(mode='w+', dir=self.tar_dir, delete=False) as temp_file:
+            backup_files_list_path = temp_file.name
+            for file in files_to_backup:
+                temp_file.write(f"{file}\n")
+        return backup_files_list_path
+
+
+    def backup_directories_direct(self, directories: list):
+        """
+        Performs direct backup of specified directories to the tape drive using tar and mbuffer commands.
+
+        This method iterates through each provided directory and, depending on whether a backup is needed (based on incremental settings), 
+        generates a tar archive of the directory contents which is directly streamed to the tape drive.
+
+        Parameters:
+        - directories (list): A list of directory paths to be backed up.
+
+        Process:
+        1. Iterate through each directory in the provided list.
+        2. Determine if the directory needs backup (in case of incremental backups).
+        3. If a backup is needed, create a list of files to be backed up and write this list to a temporary file.
+        4. Construct a tar command to create an archive and pipe it directly to mbuffer, which writes to the tape drive.
+        5. Execute the backup command and handle any exceptions or errors.
+        6. Remove the temporary file after use.
+        7. Echo the status of each backup operation.
+
+        Returns:
+        - str: A message indicating the completion of all backup operations.
+
+        Note:
+        - This method is designed for scenarios where immediate writing of data to tape is preferred.
+        - It assumes the tape device and block size have been correctly configured.
+        - The method handles both incremental and full backups based on the provided settings.
+        """        
         for directory in directories:
             typer.echo(f"Backing up directory {directory} to {self.device_path}...")
+            needs_backup, backup_entry = self.metadata.prepare_backup_entry(directory, self.incremental)
 
-            backup_json    = self.get_json_filename(directory, label=self.label)
-            backup_history = self.load_backup_history(backup_json)
+            if not needs_backup:
+                typer.echo(f"No changes in {directory}, skipping backup.")
+                continue
 
-
-            with self.progress:
-                if self.incremental:
-                    changed_files = self.get_changed_files_list(directory, backup_history)
-                    if not changed_files:
-                        typer.echo(f"\nNo changes in {directory}, skipping backup.")
-                        continue
-                    current_state = self.scan_directory(directory)
-                    incremental_files = {filepath: current_state[filepath] for filepath in changed_files}
-                    backup_entry = {'type': 'incremental', 'files': incremental_files}
-                else:
-                    current_state = self.scan_directory(directory)
-                    backup_entry = {
-                        'files': {
-                            filepath: (
-                                {'mtime': attrs['mtime'], 'size': attrs['size']}
-                                if attrs['type'] == 'file' else
-                                {'type': 'symlink', 'target': attrs.get('target'), 'valid': attrs.get('valid', False)}
-                            )
-                            for filepath, attrs in current_state.items()
-                        }
-                    }
-                    backup_history = []  # Reset history for a full backup
-
-            # Update backup history and save JSON
-            backup_history.append(backup_entry)
-            with open(backup_json, 'w') as file:
-                json.dump(backup_history, file)
-
-            # Write files to be backed up to a list file for tar
-            files_to_backup = backup_entry['files']
-
-            # Write files to be backed up to a temporary file in self.tar_dir
-            with tempfile.NamedTemporaryFile(mode='w+', dir=self.tar_dir, delete=False) as temp_file:
-                backup_files_list_path = temp_file.name
-                for file in files_to_backup:
-                    temp_file.write(f"{file}\n")
+            backup_files_list_path = self.write_files_to_temp_list(backup_entry['files'])
 
             tar_options = ["tar", "-cvf", "-", "-T", backup_files_list_path]
             tar_options.extend(["-b", str(self.block_size)])
             backup_command = " ".join(tar_options) + f" | mbuffer -P {self.memory_buffer_percent} -m {self.memory_buffer} -s {self.block_size} -v 1 -o {self.device_path}"
-            print(f"Backup Command: {backup_command}")
+
+            current_tape_pos = self.tape_operations.show_tape_position()
+            self.metadata.update_tape_position_and_save(directory, current_tape_pos)
 
             # Execute the backup command
             process = subprocess.Popen(backup_command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             try:
                 for line in process.stderr:
-                    print(line, end='\n')  # Printing stderr for monitoring
+                    print(line, end='')  # Printing stderr for monitoring
                 process.wait()
                 if process.returncode != 0:
                     typer.echo(f"Error occurred during backup of {directory}. Error code: {process.returncode}")
@@ -504,210 +498,6 @@ class TapeBackup:
                 typer.echo(f"Backup of {directory} completed successfully.")
 
         return "All backups completed."
-
-
-    def count_files(self, directory):
-        """
-        Counts the number of files in a given directory tree, excluding symlinks to directories.
-
-        This recursive method traverses the directory tree, starting from the specified root directory,
-        and counts all the files it encounters. The count does not include directory symlinks to avoid
-        potential recursive links and to keep the count focused on actual files.
-
-        Parameters:
-        - directory (str): The root directory from which the file counting begins.
-
-        Returns:
-        - int: The total number of files present in the directory tree.
-
-        Note:
-        - This method is particularly useful for estimating the scope of a backup operation, 
-          allowing for accurate progress tracking during scanning or archiving processes.
-        - The method uses os.scandir, which is an efficient way to iterate over the entries in a 
-          directory. It checks each entry to determine if it's a file or a directory.
-        - For directories, the method calls itself recursively to count files in subdirectories.
-        - Symlinks that point to directories are intentionally ignored to prevent counting files 
-          in potentially unrelated directory trees.
-        """
-        count = 0
-        for entry in os.scandir(directory):
-            if entry.is_file():
-                count += 1
-            elif entry.is_dir():
-                if not os.path.islink(entry.path):
-                    count += self.count_files(entry.path)
-        return count
-
-
-    def scan_directory(self, directory):
-        """
-        Scans the given directory, cataloging files and their attributes, including symlinks.
-
-        This method performs a recursive walk through the directory, recording details of each file
-        and symlink it encounters. This information is essential for backup processes, particularly
-        incremental backups, where changes need to be tracked.
-
-        A progress bar is displayed to provide visual feedback on the scanning process, showing the 
-        number of files processed out of the total files in the directory.
-
-        Parameters:
-        - directory (str): The path to the directory that needs to be scanned.
-
-        Returns:
-        - dict: A dictionary containing the file paths as keys and their attributes as values.
-                File attributes include modification time, size, and symlink target (if applicable).
-
-        Note:
-        - For symlinks, the method records the target path and whether the symlink is valid (i.e., the 
-          target exists).
-        - Files that cannot be accessed due to being removed or inaccessible during the scan are 
-          noted, but not included in the returned data.
-        - This method uses os.walk and handles each file or symlink it encounters. Symlinks are not 
-          followed to prevent potential loops or recursive links.
-        """        
-        task_id = self.progress.add_task(f"Scanning {directory}", total=self.count_files(directory))
-
-        file_data = {}
-        #expected_files = self.count_files(directory)
-
-        for root, dirs, files in os.walk(directory, followlinks=False):
-            for filename in files:
-                self.progress.advance(task_id, advance=1)
-                filepath = os.path.join(root, filename)
-                if os.path.islink(filepath):
-                    # Handle symlink: store it as a symlink with its target
-                    try:
-                        target = os.readlink(filepath)
-                        file_data[filepath] = {
-                            'type': 'symlink',
-                            'target': target,
-                            'valid': os.path.exists(filepath)  # Check if symlink is valid
-                        }
-                    except OSError:
-                        print(f"Warning: Error reading symlink: {filepath}")
-                        file_data[filepath] = {
-                            'type': 'symlink',
-                            'target': None,
-                            'valid': False
-                        }
-                else:
-                    # Handle regular file
-                    try:
-                        stats = os.stat(filepath)
-                        file_data[filepath] = {
-                            'type': 'file',
-                            'mtime': stats.st_mtime,
-                            'size': stats.st_size
-                        }
-                    except FileNotFoundError:
-                        print(f"Warning: File not found: {filepath}")
-                    continue
-        return file_data
-
-
-    def get_changed_files_list(self, directory, backup_history):
-        """
-        Determines the list of changed files in a directory based on the last backup history.
-
-        Args:
-            directory (str): The directory path to scan for changes.
-            backup_history (list): The list of past backup entries.
-
-        Returns:
-            list: A list of file paths that have changed since the last backup.
-        """
-        combined_state = self.get_combined_backup_state(backup_history)
-        current_state = self.scan_directory(directory)
-        changed_files = []
-
-        for filepath, attrs in current_state.items():
-            last_attrs = combined_state.get(filepath)
-
-            if attrs['type'] == 'file':
-                if not last_attrs or last_attrs.get('mtime') != attrs['mtime'] or last_attrs.get('size') != attrs['size']:
-                    changed_files.append(filepath)
-            elif attrs['type'] == 'symlink':
-                if not last_attrs or last_attrs.get('target') != attrs['target'] or last_attrs.get('valid') != attrs['valid']:
-                    changed_files.append(filepath)
-
-        # Optionally, handle deleted files if required
-        # for filepath in last_backup['files']:
-        #     if filepath not in current_state:
-        #         # Handle the deleted file
-        #         pass
-
-        return changed_files
-
-
-    def get_combined_backup_state(self, backup_history):
-        """
-        Aggregates the file states from all entries in the backup history into a single combined state.
-
-        This method is used to create a cumulative view of the backup history by merging the file states
-        (including metadata like modification time and size) from all previous backup entries. 
-        This combined state is essential for determining the changes that need to be included in an 
-        incremental backup.
-
-        Parameters:
-        - backup_history (list): A list of dictionaries, where each dictionary represents a backup entry 
-                                containing the state of files backed up during that session.
-
-        Returns:
-        - dict: A dictionary representing the combined state of all files from the provided backup history. 
-                The keys are file paths, and the values are dictionaries of file attributes.
-
-        Note:
-        - The combined state is crucial for incremental backups, as it allows the system to identify 
-          which files have been modified, added, or deleted since the last backup. It helps in creating 
-          efficient backup processes by avoiding redundancy and focusing only on changed files.
-        """        
-        combined_state = {}
-        for entry in backup_history:
-            combined_state.update(entry['files'])
-        return combined_state
-
-
-    def load_backup_history(self, backup_json):
-        """
-        Loads the backup history from a JSON file.
-
-        Args:
-            backup_json (str): Path to the JSON file containing the backup history.
-
-        Returns:
-            list: A list of backup entries, each entry is a dictionary with details about the backup.
-                Returns an empty list if the file does not exist.
-        """
-        if os.path.exists(backup_json):
-            with open(backup_json, 'r') as file:
-                return json.load(file)
-        return []
-
-
-    def get_json_filename(self, directory, label=None):
-        """
-        Generates the filename for the JSON file that stores the backup history for a given directory.
-
-        This method creates a filename for a JSON file that keeps a record of the backup history, 
-        including details of both full and incremental backups for a specific directory. 
-        The filename can be prefixed with a label for additional context or identification.
-
-        Parameters:
-        - directory (str): The directory path for which the backup history is maintained.
-        - label (str, optional): An optional label that can be prefixed to the filename for 
-                                easier identification of the backup set. Defaults to None.
-
-        Returns:
-        - str: The fully qualified path of the JSON file used to store the backup history.
-
-        Note:
-        - The JSON file is essential for managing incremental backups, as it contains information 
-          about the files backed up in each session. It is used to determine the changes since 
-          the last backup, enabling efficient incremental backup processes.
-        """
-        dir_name = os.path.basename(directory)
-        label_prefix = f"{label}_" if label else ""
-        return os.path.join(self.snapshot_dir, f"{label_prefix}{dir_name}_backup.json")
 
 
     def cleanup_temp_files(self):
