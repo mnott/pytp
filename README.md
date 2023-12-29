@@ -137,12 +137,12 @@ Look at the configs directory. It contains a file `tapes.json``:
         {
             "name": "lto9",
             "device_path": "/dev/nst0",
-            "block_size": 524288
+            "block_size": 2048
         },
         {
             "name": "lto6",
             "device_path": "/dev/nst1",
-            "block_size": 524288
+            "block_size": 2048
         }
     ]
 }
