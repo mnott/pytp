@@ -2,6 +2,12 @@
 # encoding: utf-8
 
 # summarize.py
+
+#
+# Defaults
+#
+DEFAULTS = ["pytp.py", "pytp"]
+
 import os
 import typer
 from typing import List
@@ -16,18 +22,20 @@ app = typer.Typer(
     """  # Additional information displayed at the end of the help message    
 )
 
-
 #
 # Summarize the code
 #
 @app.command()
 def summarize(
-    paths: List[str] = typer.Option(["pytp.py", "pytp"],
-                                    help="Paths to Python files or directories to summarize")
+    paths: List[str] = typer.Argument(None, help="Paths to Python files or directories to summarize")
 ) -> None:
     """
     This command summarizes the Python files at the given paths, stripping out all docstrings.
     """
+    # Check if no paths are provided
+    if paths is None or len(paths) == 0:
+        paths = DEFAULTS
+        
     code_summary = strip_docstrings_and_copy_code(paths)
     print(code_summary)
 
@@ -49,6 +57,7 @@ def strip_docstrings_and_copy_code(paths: List[str]):
             print(f"Skipping non-Python file: {path}")
 
     return code_summary
+
 
 def process_file(filepath):
     summary = f"\n\n# {filepath}\n"
