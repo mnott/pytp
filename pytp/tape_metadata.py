@@ -261,7 +261,6 @@ class TapeMetadata:
         """
 
         combined_state = self.get_combined_backup_state(backup_history)
-        #task_id = self.progress.add_task(f"Scanning {directory}", total=self.count_files(directory))
         current_state = self.scan_directory(directory)
 
         changed_files = []
