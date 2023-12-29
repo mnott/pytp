@@ -426,7 +426,7 @@ class TapeOperations:
                 self.skip_file_markers(1, False)
 
 
-    def backup_directories(self, directories: list, strategy="direct", incremental=False, max_concurrent_tars: int = 2, memory_buffer = 6, memory_buffer_percent = 40):
+    def backup_directories(self, directories: list, label = None, strategy="direct", incremental=False, max_concurrent_tars: int = 2, memory_buffer = 6, memory_buffer_percent = 40):
         """
         Initiates the backup process for the specified directories with the given strategy.
 
@@ -435,6 +435,7 @@ class TapeOperations:
 
         Parameters:
             directories (list): A list of directories (or files) to be backed up.
+            label (str, optional): The label to be used for the backup. Defaults to None.
             strategy (str, optional): The backup strategy to use. Options include 'direct', 'tar', and 'dd'.
                                       Default is 'direct'.
             incremental (bool, optional): If True, performs an incremental backup. Default is False.
@@ -448,7 +449,7 @@ class TapeOperations:
         The actual backup process is delegated to the TapeBackup class's backup_directories method, which performs
         the backup according to the chosen strategy.
         """
-        tape_backup = TapeBackup(self.device_path, self.block_size, self.tar_dir, self.snapshot_dir, strategy, incremental, max_concurrent_tars, memory_buffer, memory_buffer_percent)
+        tape_backup = TapeBackup(self.device_path, self.block_size, self.tar_dir, self.snapshot_dir, label, strategy, incremental, max_concurrent_tars, memory_buffer, memory_buffer_percent)
 
         # Set up signal handling
         signal.signal(signal.SIGINT, lambda sig, frame: tape_backup.cleanup_temp_files())

@@ -1,10 +1,12 @@
 # tape_backup.py
-import threading
+import json
 import os
+import tempfile
 import subprocess
+import threading
 import typer
 import time
-import datetime
+from rich.progress import Progress
 
 class TapeBackup:
     """
@@ -20,6 +22,7 @@ class TapeBackup:
         block_size                 (int): Stores the block size.
         max_concurrent_tars        (int): Stores the maximum number of tar files that can be generated concurrently.
         tar_dir                    (str): Stores the path of the directory for tar files.
+        label                      (str): Stores the label of the backup.
         strategy                   (str): Stores the backup strategy to be used (direct or tar (via memory buffer), or dd (without memory buffer)).
         incremental               (bool): Flag to indicate whether incremental backup is enabled.
         max_concurrent_tars        (int): The maximum number of concurrent tar operations.
@@ -44,7 +47,7 @@ class TapeBackup:
     STRATEGY_TAR    = 'tar'    # creates tar files first, then writes to tape, using memory buffer
     STRATEGY_DD     = 'dd'     # creates tar files first, then writes to tape using dd, without memory buffer
 
-    def __init__(self, device_path, block_size, tar_dir, snapshot_dir, strategy = "direct", incremental = False, max_concurrent_tars = 2, memory_buffer = 6, memory_buffer_percent = 40):
+    def __init__(self, device_path, block_size, tar_dir, snapshot_dir, label = None, strategy = "direct", incremental = False, max_concurrent_tars = 2, memory_buffer = 6, memory_buffer_percent = 40):
         """
         Initializes the TapeBackup class.
 
@@ -54,6 +57,7 @@ class TapeBackup:
             tar_dir                    (str): The root directory where tar files will be stored.
             max_concurrent_tars        (int): The maximum number of concurrent tar operations.
             strategy                   (str): The backup strategy to be used (direct, tar, or dd).
+            label                      (str): The label of the backup.
             memory_buffer              (int): The size of the memory buffer to be used for tar and dd operations.
             memory_buffer_percent      (int): The percentage the memory buffer needs to be filled before streaming to tape.
         """        
@@ -64,6 +68,7 @@ class TapeBackup:
         self.memory_buffer_percent = memory_buffer_percent
         self.tar_dir               = tar_dir
         self.snapshot_dir          = snapshot_dir
+        self.label                 = label
         self.strategy              = strategy
         self.incremental           = incremental
         self.all_tars_generated    = False
@@ -76,6 +81,7 @@ class TapeBackup:
         self.to_write_lock         = threading.Lock()
         self.running               = True
         self.semaphore             = threading.Semaphore(max_concurrent_tars)
+        self.progress              = Progress()
 
 
     def generate_tar_file(self, directory, index):
@@ -106,15 +112,55 @@ class TapeBackup:
 
             dir_name = os.path.basename(directory)
             tar_path = os.path.join(self.tar_dir, f"{dir_name}.tar")
-            snapshot_file = self.get_snapshot_filename(directory) if self.incremental else None
             self.tars_generating.add(tar_path)
 
-            tar_command = ["tar", "-cvf", tar_path, "-b", str(self.block_size)]
-            if self.incremental:
-                tar_command.extend(["--listed-incremental", snapshot_file])
-            tar_command.append(directory)
+            backup_json    = self.get_json_filename(directory, label=self.label)
+            backup_history = self.load_backup_history(backup_json)
+
+            with self.progress:
+                if self.incremental:
+                    changed_files = self.get_changed_files_list(directory, backup_history)
+
+                    if not changed_files:
+                        typer.echo(f"\nNo changes in {directory}, skipping backup.")
+                        return
+                    current_state = self.scan_directory(directory)
+                    incremental_files = {filepath: current_state[filepath] for filepath in changed_files}
+                    backup_entry = {'type': 'incremental', 'files': incremental_files}
+                else:
+                    current_state = self.scan_directory(directory)
+                    backup_entry = {
+                        'files': {
+                            filepath: (
+                                {'mtime': attrs['mtime'], 'size': attrs['size']}
+                                if attrs['type'] == 'file' else
+                                {'type': 'symlink', 'target': attrs.get('target'), 'valid': attrs.get('valid', False)}
+                            )
+                            for filepath, attrs in current_state.items()
+                        }
+                    }
+                    backup_history = []  # Reset history for a full backup
+
+            # Update backup history and save JSON
+            backup_history.append(backup_entry)
+            with open(backup_json, 'w') as file:
+                json.dump(backup_history, file)    
+                
+            # Write files to be backed up to a list file for tar
+            files_to_backup = backup_entry['files']
+
+            # Write files to be backed up to a temporary file in self.tar_dir
+            with tempfile.NamedTemporaryFile(mode='w+', dir=self.tar_dir, delete=False) as temp_file:
+                backup_files_list_path = temp_file.name
+                for file in files_to_backup:
+                    temp_file.write(f"{file}\n")            
+
+            tar_command = ["tar", "-cvf", tar_path, "-T", backup_files_list_path]
+            tar_command.extend(["-b", str(self.block_size)])
+            # tar_command = ["tar", "-cvf", tar_path, "-b", str(self.block_size), directory]
 
             subprocess.run(tar_command)
+            os.remove(backup_files_list_path)  # Remove the temporary file after use
 
             with self.generating_lock:
                 self.tars_generating.remove(tar_path)
@@ -182,12 +228,7 @@ class TapeBackup:
 
             # Use cat to read the tar file and pipe it through mbuffer to the tape drive
             backup_command = f"cat {tar_path} | mbuffer -P {self.memory_buffer_percent} -m {self.memory_buffer} -s {self.block_size} -v 1 -o {self.device_path} -l {dd_log_path} -v 3"
-            process = subprocess.Popen(backup_command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-            
-            # Handle the output and errors
-            for line in process.stderr:
-                dd_log.write(line)
-                dd_log.flush()
+            process = subprocess.Popen(backup_command, shell=True, stdout=subprocess.PIPE, stderr=dd_log, text=True)
 
             process.wait()
             if process.returncode != 0:
@@ -281,7 +322,6 @@ class TapeBackup:
                         self.tars_generated.remove((generated_index, generated_tar))
                         self.tars_to_be_generated.pop(0)
                         break
-
 
 
     def backup_directories(self, directories):
@@ -397,26 +437,62 @@ class TapeBackup:
         This method is designed for scenarios where the immediate writing of data to tape is preferred over
         the creation of intermediate tar files. It assumes that the tape device and block size have been
         correctly configured and that the directories listed are valid and accessible.
-        """        
+        """
         for directory in directories:
             typer.echo(f"Backing up directory {directory} to {self.device_path}...")
 
-            snapshot_file = self.get_snapshot_filename(directory) if self.incremental else None
-            tar_options = ["tar", "-cvf", "-"]
-            if self.incremental:
-                tar_options.extend(["--listed-incremental", snapshot_file])
-            tar_options.extend(["-b", str(self.block_size), directory])
+            backup_json    = self.get_json_filename(directory, label=self.label)
+            backup_history = self.load_backup_history(backup_json)
+
+
+            with self.progress:
+                if self.incremental:
+                    changed_files = self.get_changed_files_list(directory, backup_history)
+                    if not changed_files:
+                        typer.echo(f"\nNo changes in {directory}, skipping backup.")
+                        continue
+                    current_state = self.scan_directory(directory)
+                    incremental_files = {filepath: current_state[filepath] for filepath in changed_files}
+                    backup_entry = {'type': 'incremental', 'files': incremental_files}
+                else:
+                    current_state = self.scan_directory(directory)
+                    backup_entry = {
+                        'files': {
+                            filepath: (
+                                {'mtime': attrs['mtime'], 'size': attrs['size']}
+                                if attrs['type'] == 'file' else
+                                {'type': 'symlink', 'target': attrs.get('target'), 'valid': attrs.get('valid', False)}
+                            )
+                            for filepath, attrs in current_state.items()
+                        }
+                    }
+                    backup_history = []  # Reset history for a full backup
+
+            # Update backup history and save JSON
+            backup_history.append(backup_entry)
+            with open(backup_json, 'w') as file:
+                json.dump(backup_history, file)
+
+            # Write files to be backed up to a list file for tar
+            files_to_backup = backup_entry['files']
+
+            # Write files to be backed up to a temporary file in self.tar_dir
+            with tempfile.NamedTemporaryFile(mode='w+', dir=self.tar_dir, delete=False) as temp_file:
+                backup_files_list_path = temp_file.name
+                for file in files_to_backup:
+                    temp_file.write(f"{file}\n")
+
+            tar_options = ["tar", "-cvf", "-", "-T", backup_files_list_path]
+            tar_options.extend(["-b", str(self.block_size)])
             backup_command = " ".join(tar_options) + f" | mbuffer -P {self.memory_buffer_percent} -m {self.memory_buffer} -s {self.block_size} -v 1 -o {self.device_path}"
+            print(f"Backup Command: {backup_command}")
 
+            # Execute the backup command
             process = subprocess.Popen(backup_command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-
-            # Read and print stderr for verbosity
             try:
                 for line in process.stderr:
-                    if not line.endswith('\n'):
-                        line += '\n'
-                    print(line, end='')
-                process.wait()  # Wait for the process to finish
+                    print(line, end='\n')  # Printing stderr for monitoring
+                process.wait()
                 if process.returncode != 0:
                     typer.echo(f"Error occurred during backup of {directory}. Error code: {process.returncode}")
                     continue
@@ -424,17 +500,214 @@ class TapeBackup:
                 typer.echo(f"Error occurred during backup of {directory}: {e}")
             finally:
                 process.stderr.close()
+                os.remove(backup_files_list_path)  # Remove the temporary file after use
                 typer.echo(f"Backup of {directory} completed successfully.")
 
         return "All backups completed."
 
 
+    def count_files(self, directory):
+        """
+        Counts the number of files in a given directory tree, excluding symlinks to directories.
 
-    def get_snapshot_filename(self, directory):
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        This recursive method traverses the directory tree, starting from the specified root directory,
+        and counts all the files it encounters. The count does not include directory symlinks to avoid
+        potential recursive links and to keep the count focused on actual files.
+
+        Parameters:
+        - directory (str): The root directory from which the file counting begins.
+
+        Returns:
+        - int: The total number of files present in the directory tree.
+
+        Note:
+        - This method is particularly useful for estimating the scope of a backup operation, 
+          allowing for accurate progress tracking during scanning or archiving processes.
+        - The method uses os.scandir, which is an efficient way to iterate over the entries in a 
+          directory. It checks each entry to determine if it's a file or a directory.
+        - For directories, the method calls itself recursively to count files in subdirectories.
+        - Symlinks that point to directories are intentionally ignored to prevent counting files 
+          in potentially unrelated directory trees.
+        """
+        count = 0
+        for entry in os.scandir(directory):
+            if entry.is_file():
+                count += 1
+            elif entry.is_dir():
+                if not os.path.islink(entry.path):
+                    count += self.count_files(entry.path)
+        return count
+
+
+    def scan_directory(self, directory):
+        """
+        Scans the given directory, cataloging files and their attributes, including symlinks.
+
+        This method performs a recursive walk through the directory, recording details of each file
+        and symlink it encounters. This information is essential for backup processes, particularly
+        incremental backups, where changes need to be tracked.
+
+        A progress bar is displayed to provide visual feedback on the scanning process, showing the 
+        number of files processed out of the total files in the directory.
+
+        Parameters:
+        - directory (str): The path to the directory that needs to be scanned.
+
+        Returns:
+        - dict: A dictionary containing the file paths as keys and their attributes as values.
+                File attributes include modification time, size, and symlink target (if applicable).
+
+        Note:
+        - For symlinks, the method records the target path and whether the symlink is valid (i.e., the 
+          target exists).
+        - Files that cannot be accessed due to being removed or inaccessible during the scan are 
+          noted, but not included in the returned data.
+        - This method uses os.walk and handles each file or symlink it encounters. Symlinks are not 
+          followed to prevent potential loops or recursive links.
+        """        
+        task_id = self.progress.add_task(f"Scanning {directory}", total=self.count_files(directory))
+
+        file_data = {}
+        #expected_files = self.count_files(directory)
+
+        for root, dirs, files in os.walk(directory, followlinks=False):
+            for filename in files:
+                self.progress.advance(task_id, advance=1)
+                filepath = os.path.join(root, filename)
+                if os.path.islink(filepath):
+                    # Handle symlink: store it as a symlink with its target
+                    try:
+                        target = os.readlink(filepath)
+                        file_data[filepath] = {
+                            'type': 'symlink',
+                            'target': target,
+                            'valid': os.path.exists(filepath)  # Check if symlink is valid
+                        }
+                    except OSError:
+                        print(f"Warning: Error reading symlink: {filepath}")
+                        file_data[filepath] = {
+                            'type': 'symlink',
+                            'target': None,
+                            'valid': False
+                        }
+                else:
+                    # Handle regular file
+                    try:
+                        stats = os.stat(filepath)
+                        file_data[filepath] = {
+                            'type': 'file',
+                            'mtime': stats.st_mtime,
+                            'size': stats.st_size
+                        }
+                    except FileNotFoundError:
+                        print(f"Warning: File not found: {filepath}")
+                    continue
+        return file_data
+
+
+    def get_changed_files_list(self, directory, backup_history):
+        """
+        Determines the list of changed files in a directory based on the last backup history.
+
+        Args:
+            directory (str): The directory path to scan for changes.
+            backup_history (list): The list of past backup entries.
+
+        Returns:
+            list: A list of file paths that have changed since the last backup.
+        """
+        combined_state = self.get_combined_backup_state(backup_history)
+        current_state = self.scan_directory(directory)
+        changed_files = []
+
+        for filepath, attrs in current_state.items():
+            last_attrs = combined_state.get(filepath)
+
+            if attrs['type'] == 'file':
+                if not last_attrs or last_attrs.get('mtime') != attrs['mtime'] or last_attrs.get('size') != attrs['size']:
+                    changed_files.append(filepath)
+            elif attrs['type'] == 'symlink':
+                if not last_attrs or last_attrs.get('target') != attrs['target'] or last_attrs.get('valid') != attrs['valid']:
+                    changed_files.append(filepath)
+
+        # Optionally, handle deleted files if required
+        # for filepath in last_backup['files']:
+        #     if filepath not in current_state:
+        #         # Handle the deleted file
+        #         pass
+
+        return changed_files
+
+
+    def get_combined_backup_state(self, backup_history):
+        """
+        Aggregates the file states from all entries in the backup history into a single combined state.
+
+        This method is used to create a cumulative view of the backup history by merging the file states
+        (including metadata like modification time and size) from all previous backup entries. 
+        This combined state is essential for determining the changes that need to be included in an 
+        incremental backup.
+
+        Parameters:
+        - backup_history (list): A list of dictionaries, where each dictionary represents a backup entry 
+                                containing the state of files backed up during that session.
+
+        Returns:
+        - dict: A dictionary representing the combined state of all files from the provided backup history. 
+                The keys are file paths, and the values are dictionaries of file attributes.
+
+        Note:
+        - The combined state is crucial for incremental backups, as it allows the system to identify 
+          which files have been modified, added, or deleted since the last backup. It helps in creating 
+          efficient backup processes by avoiding redundancy and focusing only on changed files.
+        """        
+        combined_state = {}
+        for entry in backup_history:
+            combined_state.update(entry['files'])
+        return combined_state
+
+
+    def load_backup_history(self, backup_json):
+        """
+        Loads the backup history from a JSON file.
+
+        Args:
+            backup_json (str): Path to the JSON file containing the backup history.
+
+        Returns:
+            list: A list of backup entries, each entry is a dictionary with details about the backup.
+                Returns an empty list if the file does not exist.
+        """
+        if os.path.exists(backup_json):
+            with open(backup_json, 'r') as file:
+                return json.load(file)
+        return []
+
+
+    def get_json_filename(self, directory, label=None):
+        """
+        Generates the filename for the JSON file that stores the backup history for a given directory.
+
+        This method creates a filename for a JSON file that keeps a record of the backup history, 
+        including details of both full and incremental backups for a specific directory. 
+        The filename can be prefixed with a label for additional context or identification.
+
+        Parameters:
+        - directory (str): The directory path for which the backup history is maintained.
+        - label (str, optional): An optional label that can be prefixed to the filename for 
+                                easier identification of the backup set. Defaults to None.
+
+        Returns:
+        - str: The fully qualified path of the JSON file used to store the backup history.
+
+        Note:
+        - The JSON file is essential for managing incremental backups, as it contains information 
+          about the files backed up in each session. It is used to determine the changes since 
+          the last backup, enabling efficient incremental backup processes.
+        """
         dir_name = os.path.basename(directory)
-        return os.path.join(self.snapshot_dir, f"{dir_name}_{timestamp}.snapshot")
-
+        label_prefix = f"{label}_" if label else ""
+        return os.path.join(self.snapshot_dir, f"{label_prefix}{dir_name}_backup.json")
 
 
     def cleanup_temp_files(self):
