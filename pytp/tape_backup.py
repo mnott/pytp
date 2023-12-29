@@ -127,8 +127,6 @@ class TapeBackup:
             needs_backup, backup_entry = self.metadata.prepare_backup_entry(directory, self.incremental)
 
             if needs_backup:
-                # Your existing logic to generate tar file...
-    
                 # Write files to be backed up to a list file for tar
                 backup_files_list_path = self.write_files_to_temp_list(backup_entry['files'])
 
