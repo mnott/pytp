@@ -154,7 +154,8 @@ In the configs directory you will also find a file `default_config.json`:
 
 ```json
 {
-    "temp_dir": "/data/temp"
+    "tar_dir": "/data/temp/tars",
+    "snapshot_dir": "/data/temp/snapshots"
 }
 ```
 

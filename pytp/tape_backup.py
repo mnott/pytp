@@ -18,8 +18,9 @@ class TapeBackup:
         device_path                (str): Stores the device path of the tape drive.
         block_size                 (int): Stores the block size.
         max_concurrent_tars        (int): Stores the maximum number of tar files that can be generated concurrently.
-        temp_dir_root              (str): Stores the path of the temporary directory for tar files.
+        tar_dir                    (str): Stores the path of the directory for tar files.
         strategy                   (str): Stores the backup strategy to be used (direct or tar (via memory buffer), or dd (without memory buffer)).
+        incremental               (bool): Flag to indicate whether incremental backup is enabled.
         max_concurrent_tars        (int): The maximum number of concurrent tar operations.
         memory_buffer              (int): The size of the memory buffer to be used for tar and dd operations.
         memory_buffer_percent      (int): The percentage the memory buffer needs to be filled before streaming to tape.
@@ -42,14 +43,14 @@ class TapeBackup:
     STRATEGY_TAR    = 'tar'    # creates tar files first, then writes to tape, using memory buffer
     STRATEGY_DD     = 'dd'     # creates tar files first, then writes to tape using dd, without memory buffer
 
-    def __init__(self, device_path, block_size, temp_dir_root, strategy="direct", max_concurrent_tars = 2, memory_buffer=6, memory_buffer_percent=40):
+    def __init__(self, device_path, block_size, tar_dir, snapshot_dir, strategy = "direct", incremental = False, max_concurrent_tars = 2, memory_buffer = 6, memory_buffer_percent = 40):
         """
         Initializes the TapeBackup class.
 
         Args:
             device_path                (str): The path to the tape drive device.
             block_size                 (int): The block size to be used for tar and dd operations.
-            temp_dir_root              (str): The root directory where temporary tar files will be stored.
+            tar_dir                    (str): The root directory where tar files will be stored.
             max_concurrent_tars        (int): The maximum number of concurrent tar operations.
             strategy                   (str): The backup strategy to be used (direct, tar, or dd).
             memory_buffer              (int): The size of the memory buffer to be used for tar and dd operations.
@@ -60,8 +61,10 @@ class TapeBackup:
         self.max_concurrent_tars   = max_concurrent_tars
         self.memory_buffer         = f"{memory_buffer}G"
         self.memory_buffer_percent = memory_buffer_percent
-        self.temp_dir_root         = temp_dir_root
+        self.tar_dir               = tar_dir
+        self.snapshot_dir          = snapshot_dir
         self.strategy              = strategy
+        self.incremental           = incremental
         self.all_tars_generated    = False
         self.tars_to_be_generated  = []
         self.tars_generating       = set()
@@ -101,16 +104,21 @@ class TapeBackup:
                 return
 
             dir_name = os.path.basename(directory)
-            temp_tar_path = os.path.join(self.temp_dir_root, f"{dir_name}.tar")
-            self.tars_generating.add(temp_tar_path)
+            tar_path = os.path.join(self.tar_dir, f"{dir_name}.tar")
+            snapshot_file = os.path.join(self.snapshot_dir, f"{dir_name}.snapshot") if self.incremental else None
+            self.tars_generating.add(tar_path)
 
-            tar_command = ["tar", "-cvf", temp_tar_path, "-b", str(self.block_size), directory]
+            tar_command = ["tar", "-cvf", tar_path, "-b", str(self.block_size)]
+            if self.incremental:
+                tar_command.extend(["--listed-incremental", snapshot_file])
+            tar_command.append(directory)
+
             subprocess.run(tar_command)
 
             with self.generating_lock:
-                self.tars_generating.remove(temp_tar_path)
+                self.tars_generating.remove(tar_path)
             with self.generated_lock:
-                self.tars_generated.append((index, temp_tar_path))
+                self.tars_generated.append((index, tar_path))
 
             self.check_and_move_to_write()
 
@@ -166,7 +174,7 @@ class TapeBackup:
 
         This method ensures that each tar file is written securely and efficiently to the tape drive while providing detailed logs of the operation.
         """        
-        dd_log_path = os.path.join(self.temp_dir_root, "dd_output.log")
+        dd_log_path = os.path.join(self.tar_dir, "dd_output.log")
         with open(dd_log_path, 'a') as dd_log:
             dd_log.write(f"\nWriting {tar_path} to tape...\n")
             dd_log.flush()
@@ -212,7 +220,7 @@ class TapeBackup:
         This method offers a straightforward approach to writing tar files to tape using dd. It is suitable for
         situations where mbuffer is not required or preferred, providing a direct and efficient data transfer mechanism.
         """        
-        dd_log_path = os.path.join(self.temp_dir_root, "dd_output.log")
+        dd_log_path = os.path.join(self.tar_dir, "dd_output.log")
         with open(dd_log_path, 'a') as dd_log:
             dd_log.write(f"\nWriting {tar_path} to tape...\n")
             dd_log.flush()
@@ -340,7 +348,7 @@ class TapeBackup:
         The method assumes that each directory in the 'directories' list is a valid path and tha
         the tape device and block size have been correctly configured.
         """
-        self.tars_to_be_generated = [(index, os.path.join(self.temp_dir_root, f"{os.path.basename(dir)}.tar")) for index, dir in enumerate(directories)]
+        self.tars_to_be_generated = [(index, os.path.join(self.tar_dir, f"{os.path.basename(dir)}.tar")) for index, dir in enumerate(directories)]
 
         tar_threads = [threading.Thread(target=self.generate_tar_file, args=(directory, index)) for index, directory in enumerate(directories)]
         for thread in tar_threads:
@@ -392,7 +400,13 @@ class TapeBackup:
         for directory in directories:
             typer.echo(f"Backing up directory {directory} to {self.device_path}...")
 
-            backup_command = f"tar -cvf - -b {self.block_size} {directory} | mbuffer -P {self.memory_buffer_percent} -m {self.memory_buffer} -s {self.block_size} -v 1 -o {self.device_path}"
+            snapshot_file = os.path.join(self.snapshot_dir, f"{os.path.basename(directory)}.snapshot") if self.incremental else None
+            tar_options = ["tar", "-cvf", "-"]
+            if self.incremental:
+                tar_options.extend(["--listed-incremental", snapshot_file])
+            tar_options.extend(["-b", str(self.block_size), directory])
+            backup_command = " ".join(tar_options) + f" | mbuffer -P {self.memory_buffer_percent} -m {self.memory_buffer} -s {self.block_size} -v 1 -o {self.device_path}"
+
             process = subprocess.Popen(backup_command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
             # Read and print stderr for verbosity

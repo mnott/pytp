@@ -35,66 +35,76 @@ class ConfigManager:
 
 
     def load_config(self, file_path: str) -> Dict[str, Any]:
-            """
-            Load a configuration file and return its contents as a dictionary.
+        """
+        Load a configuration file and return its contents as a dictionary.
 
-            Args:
-                file_path (str): The path to the configuration file.
+        Args:
+            file_path (str): The path to the configuration file.
 
-            Returns:
-                Dict[str, Any]: A dictionary representation of the configuration file.
-            """
-            try:
-                with open(file_path, 'r') as file:
-                    return json.load(file)
-            except Exception as e:
-                print(f"Error loading config: {e}")
-                return {}
+        Returns:
+            Dict[str, Any]: A dictionary representation of the configuration file.
+        """
+        try:
+            with open(file_path, 'r') as file:
+                return json.load(file)
+        except Exception as e:
+            print(f"Error loading config: {e}")
+            return {}
 
 
     def get_tape_drive_config(self, drive_name=None) -> str:
-            """
-            Retrieve the device path of a specified tape drive from the configuration.
+        """
+        Retrieve the device path of a specified tape drive from the configuration.
 
-            Args:
-                drive_name (str, optional): The name of the tape drive. Defaults to None.
+        Args:
+            drive_name (str, optional): The name of the tape drive. Defaults to None.
 
-            Returns:
-                str: The device path of the tape drive.
-            """
-            if drive_name:
-                for drive in self.config.get('tape_drives', []):
-                    if drive['name'] == drive_name:
-                        return drive['device_path']
-            else:
-                # Return the default drive if no name is provided
-                return self.config.get('tape_drives', [{}])[0].get('device_path', '/dev/nst0')
+        Returns:
+            str: The device path of the tape drive.
+        """
+        if drive_name:
+            for drive in self.config.get('tape_drives', []):
+                if drive['name'] == drive_name:
+                    return drive['device_path']
+        else:
+            # Return the default drive if no name is provided
+            return self.config.get('tape_drives', [{}])[0].get('device_path', '/dev/nst0')
 
 
     def get_tape_drive_details(self, drive_name=None):
-            """
-            Retrieve the details of a specified tape drive from the configuration.
+        """
+        Retrieve the details of a specified tape drive from the configuration.
 
-            Args:
-                drive_name (str, optional): The name of the tape drive. Defaults to None.
+        Args:
+            drive_name (str, optional): The name of the tape drive. Defaults to None.
 
-            Returns:
-                Dict[str, Any]: A dictionary containing the details of the tape drive.
-            """
-            if drive_name:
-                for drive in self.config.get('tape_drives', []):
-                    if drive['name'] == drive_name:
-                        return drive
-            else:
-                # Return the default drive details if no name is provided
-                return self.config.get('tape_drives', [{}])[0]
+        Returns:
+            Dict[str, Any]: A dictionary containing the details of the tape drive.
+        """
+        if drive_name:
+            for drive in self.config.get('tape_drives', []):
+                if drive['name'] == drive_name:
+                    return drive
+        else:
+            # Return the default drive details if no name is provided
+            return self.config.get('tape_drives', [{}])[0]
 
-    def get_temp_dir(self):
-            """
-            Retrieve the temporary directory path from the default configuration.
+    def get_tar_dir(self):
+        """
+        Retrieve the temporary tar directory path from the default configuration.
 
-            Returns:
-                str: The path to the temporary directory.
-            """
-            return self.default_config.get('temp_dir', '.')
+        Returns:
+            str: The path to the temporary tar directory.
+        """
+        return self.default_config.get('tar_dir', '.')
+    
+
+    def get_snapshot_dir(self):
+        """
+        Retrieve the snapshot directory path from the default configuration.
+
+        Returns:
+            str: The path to the snapshot directory.
+        """        
+        return self.default_config.get('snapshot_dir', '.')
 

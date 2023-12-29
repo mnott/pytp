@@ -21,7 +21,7 @@ class TapeOperations:
         drive_name    (str): Name of the tape drive as configured in the system.
         device_path   (str): The file system path to the tape drive device.
         block_size    (int): The block size for tape operations, defaulting to 524288.
-        temp_dir_root (str): The root directory for temporary files used during operations.
+        tar_dir       (str): The root directory for tar files used during operations.
     """
 
     def __init__(self, drive_name, strategy="direct"):
@@ -41,7 +41,8 @@ class TapeOperations:
         tape_details       = config_manager.get_tape_drive_details(drive_name)
         self.device_path   = tape_details.get('device_path')
         self.block_size    = tape_details.get('block_size', 524288)  # Default block size if not specified
-        self.temp_dir_root = config_manager.get_temp_dir()
+        self.tar_dir       = config_manager.get_tar_dir()
+        self.snapshot_dir  = config_manager.get_snapshot_dir()
 
 
     def get_device_path(self):
@@ -425,7 +426,7 @@ class TapeOperations:
                 self.skip_file_markers(1, False)
 
 
-    def backup_directories(self, directories: list, strategy="direct", max_concurrent_tars: int = 2, memory_buffer = 6, memory_buffer_percent = 40):
+    def backup_directories(self, directories: list, strategy="direct", incremental=False, max_concurrent_tars: int = 2, memory_buffer = 6, memory_buffer_percent = 40):
         """
         Initiates the backup process for the specified directories with the given strategy.
 
@@ -436,6 +437,7 @@ class TapeOperations:
             directories (list): A list of directories (or files) to be backed up.
             strategy (str, optional): The backup strategy to use. Options include 'direct', 'tar', and 'dd'.
                                       Default is 'direct'.
+            incremental (bool, optional): If True, performs an incremental backup. Default is False.
             max_concurrent_tars (int, optional): The maximum number of concurrent tar operations allowed. 
                                                  Default is 2.
             memory_buffer (int, optional): The size of the memory buffer to use in GB. Default is 6 GB.
@@ -446,7 +448,7 @@ class TapeOperations:
         The actual backup process is delegated to the TapeBackup class's backup_directories method, which performs
         the backup according to the chosen strategy.
         """
-        tape_backup = TapeBackup(self.device_path, self.block_size, self.temp_dir_root, strategy, max_concurrent_tars, memory_buffer, memory_buffer_percent)
+        tape_backup = TapeBackup(self.device_path, self.block_size, self.tar_dir, self.snapshot_dir, strategy, incremental, max_concurrent_tars, memory_buffer, memory_buffer_percent)
 
         # Set up signal handling
         signal.signal(signal.SIGINT, lambda sig, frame: tape_backup.cleanup_temp_files())

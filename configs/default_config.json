@@ -1,3 +1,4 @@
 {
-    "temp_dir": "/data/temp"
+    "tar_dir": "/data/temp/tars",
+    "snapshot_dir": "/data/temp/snapshots"
 }
