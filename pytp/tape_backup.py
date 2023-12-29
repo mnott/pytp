@@ -4,6 +4,7 @@ import os
 import subprocess
 import typer
 import time
+import datetime
 
 class TapeBackup:
     """
@@ -105,7 +106,7 @@ class TapeBackup:
 
             dir_name = os.path.basename(directory)
             tar_path = os.path.join(self.tar_dir, f"{dir_name}.tar")
-            snapshot_file = os.path.join(self.snapshot_dir, f"{dir_name}.snapshot") if self.incremental else None
+            snapshot_file = self.get_snapshot_filename(directory) if self.incremental else None
             self.tars_generating.add(tar_path)
 
             tar_command = ["tar", "-cvf", tar_path, "-b", str(self.block_size)]
@@ -400,7 +401,7 @@ class TapeBackup:
         for directory in directories:
             typer.echo(f"Backing up directory {directory} to {self.device_path}...")
 
-            snapshot_file = os.path.join(self.snapshot_dir, f"{os.path.basename(directory)}.snapshot") if self.incremental else None
+            snapshot_file = self.get_snapshot_filename(directory) if self.incremental else None
             tar_options = ["tar", "-cvf", "-"]
             if self.incremental:
                 tar_options.extend(["--listed-incremental", snapshot_file])
@@ -426,6 +427,14 @@ class TapeBackup:
                 typer.echo(f"Backup of {directory} completed successfully.")
 
         return "All backups completed."
+
+
+
+    def get_snapshot_filename(self, directory):
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        dir_name = os.path.basename(directory)
+        return os.path.join(self.snapshot_dir, f"{dir_name}_{timestamp}.snapshot")
+
 
 
     def cleanup_temp_files(self):
