@@ -124,3 +124,21 @@ class ConfigManager:
         """        
         return self.config.get('snapshot_dir', '.')
 
+    def get_tape_library_details(self, library_name=None):
+        """
+        Retrieve the details of a specified tape library from the configuration.
+
+        Args:
+            library_name (str, optional): The name of the tape library. Defaults to None.
+
+        Returns:
+            Dict[str, Any]: A dictionary containing the details of the tape library.
+        """
+        if library_name:
+            for library in self.config.get('tape_libraries', []):
+                if library['name'] == library_name:
+                    return library
+        else:
+            # Return the default library details if no name is provided
+            return self.config.get('tape_libraries', [{}])[0]
+        

@@ -43,6 +43,7 @@ pretty.install()      # Automatically makes built-in Python pretty printer outpu
 #
 # Importing our custom module for tape operations.
 from pytp.tape_operations import TapeOperations
+from pytp.tape_library_operations import TapeLibraryOperations
 
 
 #
@@ -355,6 +356,19 @@ def verify(
 
 # Alias for the backup command
 app.command(name="v")(verify)
+
+
+#
+# Tape Library Operations
+#
+@app.command()
+def list_tapes(
+    library_name: str = typer.Option(os.environ.get('PYTP_LIB', 'msl2024'), "--library", "-l", help="Name of the tape drive"),
+):
+    result = TapeLibraryOperations(library_name).list_contents()
+    typer.echo(result)
+
+
 
 
 #

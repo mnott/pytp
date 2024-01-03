@@ -13,7 +13,7 @@
             "block_size": 2048
         }
     ],
-    "tape_libraryies": [
+    "tape_libraries": [
         {
             "name": "msl2024",
             "device_path": "/dev/sch0",
