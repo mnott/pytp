@@ -33,7 +33,8 @@ from rich.console   import Console
 from rich.color     import Color
 from rich.style     import Style
 from rich import pretty
-import rich.table
+from rich.table import Table
+
 pretty.install()      # Automatically makes built-in Python pretty printer output more readable
 #traceback.install()  # Uncomment to use Rich's traceback for better error visibility
 
@@ -359,13 +360,56 @@ app.command(name="v")(verify)
 
 
 #
-# Tape Library Operations
+# Tape Library Operations: List Tapes
 #
 @app.command()
-def list_tapes(
+def list(
     library_name: str = typer.Option(os.environ.get('PYTP_LIB', 'msl2024'), "--library", "-l", help="Name of the tape drive"),
 ):
-    result = TapeLibraryOperations(library_name).list_contents()
+    tlo = TapeLibraryOperations(library_name)
+    tape_library_contents = tlo.list_tapes()
+    tlo.print_tape_library_output(tape_library_contents)
+
+
+#
+# Tape Library Operations: Load Tape
+#
+@app.command()
+def load(
+    library_name: str = typer.Option(os.environ.get('PYTP_LIB', 'msl2024'), "--library", "-l", help="Name of the tape drive"),
+    drive_name  : str = typer.Option(os.environ.get('PYTP_DEV', 'lto9'), "--drive", "-d", help="Name of the tape drive"),
+    slot_number : int = typer.Argument(..., help="Slot number to load")
+):
+    tlo = TapeLibraryOperations(library_name)
+    result = tlo.load_tape(drive_name, slot_number)
+    typer.echo(result)
+
+
+#
+# Tape Library Operations: Unload Tape
+#
+@app.command()
+def unload(
+    library_name: str = typer.Option(os.environ.get('PYTP_LIB', 'msl2024'), "--library", "-l", help="Name of the tape drive"),
+    drive_name  : str = typer.Option(os.environ.get('PYTP_DEV', 'lto9'), "--drive", "-d", help="Name of the tape drive"),
+    slot_number : int = typer.Argument(None, help="Slot number to unload into, defaut: original slot")
+):
+    tlo = TapeLibraryOperations(library_name)
+    result = tlo.unload_tape(drive_name, slot_number)
+    typer.echo(result)
+
+
+#
+# Tape Library Operations: Move Tape
+#
+@app.command()
+def move(
+    library_name: str = typer.Option(os.environ.get('PYTP_LIB', 'msl2024'), "--library", "-l", help="Name of the tape drive"),
+    from_slot: str = typer.Argument(..., help="Slot to move from"),
+    to_slot  : str = typer.Argument(..., help="Slot to move to"),
+):
+    tlo = TapeLibraryOperations(library_name)
+    result = tlo.move_tape(from_slot, to_slot)
     typer.echo(result)
 
 

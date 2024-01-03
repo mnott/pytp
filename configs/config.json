@@ -17,7 +17,11 @@
         {
             "name": "msl2024",
             "device_path": "/dev/sch0",
-            "slots": 23
+            "slots": 23,
+            "drives": [
+                "lto6",
+                "lto9"
+            ]
         }        
     ]
 }

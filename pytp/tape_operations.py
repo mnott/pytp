@@ -40,7 +40,7 @@ class TapeOperations:
         self.drive_name    = drive_name
         tape_details       = config_manager.get_tape_drive_details(drive_name)
         self.device_path   = tape_details.get('device_path')
-        self.block_size    = tape_details.get('block_size', 524288)  # Default block size if not specified
+        self.block_size    = tape_details.get('block_size', 2048)  # Default block size if not specified
         self.tar_dir       = config_manager.get_tar_dir()
         self.snapshot_dir  = config_manager.get_snapshot_dir()
 
@@ -91,8 +91,10 @@ class TapeOperations:
         and errors. This is particularly useful in tape operations where many commands are
         executed in the shell.
         """
+        full_command = ["mt", "-f", self.device_path] + command
+
         try:
-            result = subprocess.run(command, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            result = subprocess.run(full_command, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             return result.stdout
         except subprocess.CalledProcessError as e:
             return f"Error: {e.stderr}"
@@ -117,14 +119,18 @@ class TapeOperations:
         This method contains example checks based on common status messages. These checks may need
         to be adjusted based on the specific responses of the tape drive in use.
         """
-        status_output = self.run_command(["mt", "-f", self.device_path, "status"])
+        status_output = self.run_command(["status"])
 
         # Example checks (TODO: adjust these based on the tape drive's specific responses)
-        if "ONLINE" in status_output:
+        if "DR_OPEN" in status_output:
+            return False # "The tape drive is empty (no tape loaded)."
+        elif "ONLINE" in status_output:
             return True  # Drive is ready
         elif "DRIVE NOT READY" in status_output or "ERROR" in status_output:
             return False  # Drive is not ready or has encountered an error
-
+        elif "Device or resource busy" in status_output:
+            return False # The tape drive is busy
+        
         return False  # Default to not ready if none of the conditions match
 
 
@@ -139,7 +145,8 @@ class TapeOperations:
         from the beginning.
 
         Returns:
-            str: A string containing the combined output of the 'mt status' and 'mt tell' commands.
+            str: A string containing the combined output of the 'mt status' and 'mt tell' commands,
+                 or a message indicating that the drive is empty.
 
         The method is useful for getting a quick overview of the tape drive's state and the 
         tape's current position. This information is valuable for troubleshooting, monitoring, 
@@ -150,8 +157,16 @@ class TapeOperations:
         tape drive's make and model. It's recommended to familiarize yourself with your specific 
         tape drive's documentation for a better understanding of the status messages.
         """
-        status_output  = self.run_command(["mt", "-f", self.device_path, "status"])
-        status_output += self.run_command(["mt", "-f", self.device_path, "tell"])
+        status_output  = self.run_command(["status"])
+
+        if "DR_OPEN" in status_output:
+            return "The tape drive is empty (no tape loaded)."
+        elif "DRIVE NOT READY" in status_output or "ERROR" in status_output:
+            return "The tape drive is not ready or has encountered an error"
+        elif "Device or resource busy" in status_output:
+            return "The tape drive is busy"
+
+        status_output += self.run_command(["tell"])
         return status_output
 
 
@@ -178,7 +193,12 @@ class TapeOperations:
         responses of the 'mt status' command for the tape drive being used. It's essential to 
         ensure compatibility with your tape drive's response format.
         """
-        status_output = self.run_command(["mt", "-f", self.device_path, "status"])
+        # Check if the drive is ready
+        if not self.is_tape_ready():
+            return "The tape drive is not ready."
+        
+        status_output = self.run_command(["status"])
+        
         file_number_line = next((line for line in status_output.split('\n') if "File number" in line), None)
         if file_number_line:
             file_number = file_number_line.split('=')[1].split(',')[0].strip()
@@ -212,7 +232,12 @@ class TapeOperations:
         As such, it's crucial to ensure that the method aligns with your tape drive's 
         response format.
         """
-        status_output = self.run_command(["mt", "-f", self.device_path, "status"])
+        # Check if the drive is ready
+        if not self.is_tape_ready():
+            return "The tape drive is not ready."
+        
+        status_output = self.run_command(["status"])
+        
         block_number_line = next((line for line in status_output.split('\n') if "Block number" in line), None)
         if block_number_line:
             block_number = block_number_line.split('=')[1].split(',')[0].strip()
@@ -251,7 +276,11 @@ class TapeOperations:
         that the block number is within the tape's capacity and relevant to your data 
         layout on the tape.
         """ 
-        status_output = self.run_command(["mt", "-f", self.device_path, "seek", str(block)])
+        # Check if the drive is ready
+        if not self.is_tape_ready():
+            return "The tape drive is not ready."
+
+        status_output = self.run_command(["seek", str(block)])
         position = self.show_tape_position()
         return position
 
@@ -283,10 +312,14 @@ class TapeOperations:
         point. It's also a good practice to rewind the tape after operations to leave it 
         in a ready state for the next use.
         """
+        # Check if the drive is ready
+        if not self.is_tape_ready():
+            return "The tape drive is not ready."
+
         if verbose:
             typer.echo(f"Rewinding {self.device_path}...")
 
-        return self.run_command(["mt", "-f", self.device_path, "rewind"])
+        return self.run_command(["rewind"])
 
 
     def init(self):
@@ -316,6 +349,10 @@ class TapeOperations:
         state with the correct configuration for data blocks. Failure to initialize 
         the tape correctly can lead to inefficient backups or data read/write errors.
         """
+        # Check if the drive is ready
+        if not self.is_tape_ready():
+            return "The tape drive is not ready."
+
         # Rewind the tape first
         rewind_result = self.rewind_tape()
         if "Error" in rewind_result:
@@ -324,7 +361,7 @@ class TapeOperations:
         typer.echo(f"Initializing tape drive {self.device_path} with block size {self.block_size}...")
 
         # Set the block size
-        return self.run_command(["mt", "-f", self.device_path, "setblk", str(self.block_size)])
+        return self.run_command(["setblk", str(self.block_size)])
 
 
     def skip_file_markers(self, count: int, verbose: bool = True):
@@ -354,6 +391,10 @@ class TapeOperations:
         backup and restore operations. It intelligently handles edge cases like 
         skipping beyond the start of the tape by automatically rewinding the tape.
         """
+        # Check if the drive is ready
+        if not self.is_tape_ready():
+            return "The tape drive is not ready."
+
         current_position = self.show_tape_position()
         
         # Calculate the new position after the skip
@@ -375,10 +416,10 @@ class TapeOperations:
 
         if real_count > 0:
             # Skip forward
-            command = ["mt", "-f", self.device_path, "fsf", str(real_count)]
+            command = ["fsf", str(real_count)]
         elif real_count < 0:
             # Skip backward
-            command = ["mt", "-f", self.device_path, "bsfm", str(abs(real_count))]
+            command = ["bsfm", str(abs(real_count))]
         else:
             return "No movement required."
 
@@ -406,6 +447,11 @@ class TapeOperations:
         to move past the listed files. This ensures that the tape position is 
         updated correctly and ready for further operations.
         """
+        # Check if the drive is ready
+        if not self.is_tape_ready():
+            typer.echo("The tape drive is not ready.")
+            return ""
+
         command = ["tar", "-b", str(self.block_size), "-tvf", self.device_path]
         process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
@@ -449,6 +495,10 @@ class TapeOperations:
         The actual backup process is delegated to the TapeBackup class's backup_directories method, which performs
         the backup according to the chosen strategy.
         """
+        # Check if the drive is ready
+        if not self.is_tape_ready():
+            return "The tape drive is not ready."
+
         tape_backup = TapeBackup(self, self.device_path, self.block_size, self.tar_dir, self.snapshot_dir, label, strategy, incremental, max_concurrent_tars, memory_buffer, memory_buffer_percent)
 
         # Set up signal handling
@@ -476,6 +526,10 @@ class TapeOperations:
         The method also handles exceptions gracefully, printing any errors encountered during the restoration.
         After the process completes, it automatically advances the tape to the next file marker.
         """
+        # Check if the drive is ready
+        if not self.is_tape_ready():
+            return "The tape drive is not ready."
+
         # Create the target directory if it does not exist
         if not os.path.exists(target_dir):
             os.makedirs(target_dir, exist_ok=True)
