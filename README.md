@@ -12,6 +12,8 @@ PyTP is a comprehensive Python-based CLI utility for tape backup operations. It'
 
 ## Sample CLI Calls
 
+### Tape Operations
+
 Here are some examples of how PyTP can be used:
 
 - Help Function:
@@ -41,6 +43,17 @@ Here are some examples of how PyTP can be used:
   ```bash
   pytp backup --drive lto9 --strategy tar /path/to/dir1 /path/to/dir2
   ```
+
+- Backup directories to tape, incremental variant:
+
+  ```bash
+  pytp backup --drive lto9 --incremental --label test --strategy tar /path/to/dir1 /path/to/dir2
+  ```
+
+This uses status files in the `snapshot_dir` as per `config.json`. You can label those
+snapshot files (see the `--label` command line option). If you do a non-incremental
+backup for a given label, the previous snapshot file will be overwritten
+(obviously this part is still under development...).
 
 - Rewind the tape (if you want to go all the way to the beginning of the tape):
 
@@ -86,10 +99,40 @@ Here are some examples of how PyTP can be used:
   pytp restore /path/to/restore/dir --drive lto9
   ```
 
+### Tape Library Operations
+
+- List the content of the library
+
+  ```bash
+  pytp list
+  ```
+
+- Load a tape from slot 2 into a given tape
+
+  ```bash
+  pytp load --drive lto9 2
+  ```
+
+- Unload a tape from a given tape to a given slot
+
+  ```bash
+  pytp unload --drive lto9 2
+  ```
+
+If you do not specify the target slot (2 in this case), the tape library
+will try to use the slot it thinks the tape was loaded from. If you did
+some wild moves, this may go wrong.
+
+- Move a tape from one slot to another
+
+  ```bash
+  pytp move 2 3
+  ```
+
+
 ## Further Development (TODOs)
 
 - Verification: Implement functionality to verify the integrity of backed-up data.
-- Tape Library Operations: Extend support for tape library operations like loading and unloading tapes.
 - Database Integration: Develop features to capture file metadata, tape, and position details in a database for easy retrieval.
 - Installation Guide: Provide a detailed installation procedure, including prerequisites like mt, mtx, mbuffer, tar, dd.
 - Testing: Establish a comprehensive test suite to ensure reliability across different tape drives and systems.
@@ -127,12 +170,12 @@ pip install -r requirements.txt
 
 ## Configuration
 
-### Tapes
-
-Look at the configs directory. It contains a file `tapes.json``:
+Look at the configs directory. It contains a file `config.json`:
 
 ```json
 {
+    "tar_dir": "/data/temp/tars",
+    "snapshot_dir": "/data/temp/snapshots",
     "tape_drives": [
         {
             "name": "lto9",
@@ -144,20 +187,24 @@ Look at the configs directory. It contains a file `tapes.json``:
             "device_path": "/dev/nst1",
             "block_size": 2048
         }
+    ],
+    "tape_libraries": [
+        {
+            "name": "msl2024",
+            "device_path": "/dev/sch0",
+            "slots": 23,
+            "drives": [
+                "lto6",
+                "lto9"
+            ]
+        }        
     ]
 }
 ```
 
-### Defaults
+The order of the tape drives in the `tape_libraries` section is important, as the tape library will typically
+address its drives by their number.
 
-In the configs directory you will also find a file `default_config.json`:
-
-```json
-{
-    "tar_dir": "/data/temp/tars",
-    "snapshot_dir": "/data/temp/snapshots"
-}
-```
 
 ## License
 PyTP is released under the "Do What The F*ck You Want To Public License" (WTFPL), which is a free software license.
