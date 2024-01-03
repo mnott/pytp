@@ -1,4 +1,6 @@
 {
+    "tar_dir": "/data/temp/tars",
+    "snapshot_dir": "/data/temp/snapshots",
     "tape_drives": [
         {
             "name": "lto9",
@@ -10,5 +12,12 @@
             "device_path": "/dev/nst1",
             "block_size": 2048
         }
+    ],
+    "tape_libraryies": [
+        {
+            "name": "msl2024",
+            "device_path": "/dev/sch0",
+            "slots": 23
+        }        
     ]
 }

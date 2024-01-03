@@ -14,9 +14,7 @@ class ConfigManager:
 
     Attributes:
         config_path               (str): Path to the main configuration file.
-        default_config_path       (str): Path to the default configuration file.
         config         (Dict[str, Any]): A dictionary holding the loaded configuration.
-        default_config (Dict[str, Any]): A dictionary holding the loaded default configuration.
     """
     def __init__(self):
         """
@@ -26,12 +24,10 @@ class ConfigManager:
         # Calculate the absolute path to the configs directory
         script_dir               = os.path.dirname(os.path.realpath(__file__))
         config_dir               = os.path.join(script_dir, '../configs')
-        self.config_path         = os.path.join(config_dir, 'tapes.json')
-        self.default_config_path = os.path.join(config_dir, 'default_config.json')
+        self.config_path         = os.path.join(config_dir, 'config.json')
 
         # Load the configuration and default configuration
         self.config              = self.load_config(self.config_path)
-        self.default_config      = self.load_config(self.default_config_path)
 
 
     def load_config(self, file_path: str) -> Dict[str, Any]:
@@ -50,6 +46,26 @@ class ConfigManager:
         except Exception as e:
             print(f"Error loading config: {e}")
             return {}
+
+
+    def get_config_value(self, key_path, default=None):
+        """
+        Retrieve a configuration value using a key path.
+
+        Args:
+            key_path (str): The path to the key in the configuration dictionary.
+            default (any): The default value to return if the key is not found.
+
+        Returns:
+            any: The value of the configuration key or the default value.
+        """
+        keys = key_path.split('.')
+        value = self.config
+        for key in keys:
+            value = value.get(key)
+            if value is None:
+                return default
+        return value
 
 
     def get_tape_drive_config(self, drive_name=None) -> str:
@@ -96,7 +112,7 @@ class ConfigManager:
         Returns:
             str: The path to the temporary tar directory.
         """
-        return self.default_config.get('tar_dir', '.')
+        return self.config.get('tar_dir', '.')
     
 
     def get_snapshot_dir(self):
@@ -106,5 +122,5 @@ class ConfigManager:
         Returns:
             str: The path to the snapshot directory.
         """        
-        return self.default_config.get('snapshot_dir', '.')
+        return self.config.get('snapshot_dir', '.')
 
