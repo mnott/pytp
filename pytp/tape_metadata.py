@@ -14,11 +14,12 @@ class TapeMetadata:
     - tape_operations: An instance of a class managing low-level tape operations.
     - progress: A Progress instance from Rich library for displaying progress bars.
     - snapshot_dir: The directory where backup metadata (JSON files) will be stored.
-    - label: An optional label to prefix to backup metadata files.
+    - label: An optional tape label to prefix to backup metadata files.
+    - job: An optional job name to prefix to backup metadata files.
     - backup_histories: A dictionary mapping directories to their backup histories.
     """    
 
-    def __init__(self, tape_operations, progress, snapshot_dir, label=None):
+    def __init__(self, tape_operations, progress, snapshot_dir, label=None, job=None):
         """
         Initializes the TapeMetadata class.
 
@@ -26,12 +27,14 @@ class TapeMetadata:
             tape_operations: The tape operations handler.
             progress       : A Progress instance for managing progress displays.
             snapshot_dir   : Directory where backup histories are stored.
-            label          : Optional label for backup files.
+            label          : Optional tape label for backup files.
+            job            : Optional job name for backup files.
         """        
         self.tape_operations  = tape_operations
         self.progress         = progress
         self.snapshot_dir     = snapshot_dir
         self.label            = label
+        self.job              = job
         self.backup_histories = {}  # key: directory, value: backup history
 
 
@@ -76,9 +79,9 @@ class TapeMetadata:
                 if not changed_files:
                     return False, {}
                 incremental_files = {filepath: current_state[filepath] for filepath in changed_files}
-                backup_entry = {'type': 'incremental', 'files': incremental_files}
+                backup_entry = {'type': 'incremental', 'label': self.label, 'files': incremental_files}
             else:
-                backup_entry = {'type': 'full', 'files': current_state}
+                backup_entry = {'type': 'full', 'label': self.label, 'files': current_state}
                 self.backup_histories[directory] = []  # Reset history for a full backup
 
         self.progress.remove_task(task_id)
@@ -122,17 +125,17 @@ class TapeMetadata:
                 json.dump(history, file)
 
 
-    def get_json_filename(self, directory, label=None):
+    def get_json_filename(self, directory, job=None):
         """
         Generates the filename for the JSON file that stores the backup history for a given directory.
 
         This method creates a filename for a JSON file that keeps a record of the backup history, 
         including details of both full and incremental backups for a specific directory. 
-        The filename can be prefixed with a label for additional context or identification.
+        The filename can be prefixed with a job name for additional context or identification.
 
         Parameters:
         - directory (str): The directory path for which the backup history is maintained.
-        - label (str, optional): An optional label that can be prefixed to the filename for 
+        - job (str, optional): An optional job name that can be prefixed to the filename for 
                                 easier identification of the backup set. Defaults to None.
 
         Returns:
@@ -144,8 +147,8 @@ class TapeMetadata:
           the last backup, enabling efficient incremental backup processes.
         """
         dir_name = os.path.basename(directory)
-        label_prefix = f"{self.label}_" if self.label else ""
-        return os.path.join(self.snapshot_dir, f"{label_prefix}{dir_name}_backup.json")
+        job_prefix = f"{self.job}_" if self.job else ""
+        return os.path.join(self.snapshot_dir, f"{job_prefix}{dir_name}_backup.json")
 
 
 

@@ -8,6 +8,7 @@ import time
 from rich.progress import Progress
 
 from pytp.tape_metadata import TapeMetadata
+from pytp.tape_library_operations import TapeLibraryOperations
 
 class TapeBackup:
     """
@@ -27,7 +28,9 @@ class TapeBackup:
         memory_buffer_percent       (int): The percentage the memory buffer needs to be filled before streaming to tape.
         tar_dir                     (str): Stores the path of the directory for tar files.
         snapshot_dir                (str): Stores the path of the directory for snapshot files.
-        label                       (str): Stores the label of the backup.
+        library_name                (str): Stores the name of the tape library.
+        label                       (str): Stores the label of the tape.
+        job                         (str): Stores the job name of the backup.
         strategy                    (str): Stores the backup strategy to be used (direct or tar (via memory buffer), or dd (without memory buffer)).
         incremental                (bool): Flag to indicate whether incremental backup is enabled.
         all_tars_generated         (bool): Flag to indicate whether all tar files have been generated.
@@ -52,7 +55,7 @@ class TapeBackup:
     STRATEGY_TAR    = 'tar'    # creates tar files first, then writes to tape, using memory buffer
     STRATEGY_DD     = 'dd'     # creates tar files first, then writes to tape using dd, without memory buffer
 
-    def __init__(self, tape_operations, device_path, block_size, tar_dir, snapshot_dir, label = None, strategy = "direct", incremental = False, max_concurrent_tars = 2, memory_buffer = 6, memory_buffer_percent = 40):
+    def __init__(self, tape_operations, device_path, block_size, tar_dir, snapshot_dir, library_name = None, label = None, job = None, strategy = "direct", incremental = False, max_concurrent_tars = 2, memory_buffer = 6, memory_buffer_percent = 40):
         """
         Initializes the TapeBackup class.
 
@@ -63,7 +66,9 @@ class TapeBackup:
             tar_dir                    (str): The root directory where tar files will be stored.
             max_concurrent_tars        (int): The maximum number of concurrent tar operations.
             strategy                   (str): The backup strategy to be used (direct, tar, or dd).
-            label                      (str): The label of the backup.
+            library_name               (str): The name of the tape library.
+            label                      (str): The label of the tape.
+            job                        (str): The job name of the backup.
             memory_buffer              (int): The size of the memory buffer to be used for tar and dd operations.
             memory_buffer_percent      (int): The percentage the memory buffer needs to be filled before streaming to tape.
         """
@@ -75,7 +80,17 @@ class TapeBackup:
         self.memory_buffer_percent = memory_buffer_percent
         self.tar_dir               = tar_dir
         self.snapshot_dir          = snapshot_dir
+        self.library_name          = library_name
         self.label                 = label
+
+        # Fetch label from tape library if not provided and using a tape library
+        if self.library_name is not None and self.label is None:
+            tlo = TapeLibraryOperations(library_name)
+            self.label = tlo.get_tape_label_from_drive(device_path = device_path)
+
+        print(f"Using label {self.label} for tape {device_path}")
+
+        self.job                   = job
         self.strategy              = strategy
         self.incremental           = incremental
         self.all_tars_generated    = False
@@ -89,7 +104,7 @@ class TapeBackup:
         self.running               = True
         self.semaphore             = threading.Semaphore(max_concurrent_tars)
         self.progress              = Progress()
-        self.metadata              = TapeMetadata(tape_operations=self.tape_operations, progress = self.progress, snapshot_dir=self.snapshot_dir, label=self.label)
+        self.metadata              = TapeMetadata(tape_operations=self.tape_operations, progress = self.progress, snapshot_dir=self.snapshot_dir, label=self.label, job=self.job)
         self.tar_to_directory_mapping = {}  # Maps tar paths to their directories
 
 

@@ -283,8 +283,10 @@ def ls(
 #
 @app.command()
 def backup(
+    library_name         : str       = typer.Option(os.environ.get('PYTP_LIB', 'msl2024'), "--library", "-l", help="Name of the tape drive"),
     drive_name           : str       = typer.Option(os.environ.get('PYTP_DEV', 'lto9'), "--drive", "-d", help="Name of the tape drive"),
-    label                : str       = typer.Option(None,     "--label", "-l",               help="Label for the backup"),
+    job                  : str       = typer.Option(None,     "--job", "-j",                 help="Job Name for the backup"),
+    label                : str       = typer.Option(None,     "--label", "-l",               help="Label for the tape (if using a library, it will be ignored)"),
     strategy             : str       = typer.Option("direct", "--strategy", "-s",            help="Backup strategy: direct or tar (via memory buffer), or dd (without memory buffer)"),
     incremental          : bool      = typer.Option(False,    "--incremental", "-i",         help="Perform an incremental backup"),
     max_concurrent_tars  : int       = typer.Option(2,        "--max-concurrent-tars", "-m", help="Maximum number of concurrent tar operations"),      
@@ -299,9 +301,12 @@ def backup(
     the tape drive, backup strategy, maximum number of concurrent tar operations, and the directories to be backed up.
 
     Args:
+        library_name          (str): The name of the tape library as configured in the system. This is used to fetch the
+                                     label and other information, if needed.
         drive_name            (str): The name of the tape drive as configured in the system. This is used to fetch the
                                      device path and other details necessary for the backup operation.
-        label                 (str): The label for the backup. This is used to identify the backup metadata.
+        job                   (str): The job name for the backup. This is used to identify the backup metadata.
+        label                 (str): The label for the tape. This is used to identify the tape it not using a tape library.
         strategy              (str): Determines the backup strategy to be used. Options are 'direct', 'tar', or 'dd'.
                                       - 'direct' streams files directly to the tape using a memory buffer,
                                       - 'tar'    first creates tar archives then writes them to tape using a memory buffer,
@@ -320,7 +325,7 @@ def backup(
 
     The result of the backup operation (success message or error information) is printed to the console.
     """
-    result = TapeOperations(drive_name).backup_directories(directories, label=label, strategy=strategy, incremental=incremental, max_concurrent_tars=max_concurrent_tars, memory_buffer=memory_buffer, memory_buffer_percent=memory_buffer_percent)
+    result = TapeOperations(drive_name).backup_directories(directories, library_name=library_name, label=label, job=job, strategy=strategy, incremental=incremental, max_concurrent_tars=max_concurrent_tars, memory_buffer=memory_buffer, memory_buffer_percent=memory_buffer_percent)
     typer.echo(result)
 
 # Alias for the backup command
@@ -332,8 +337,8 @@ app.command(name="b")(backup)
 #
 @app.command()
 def restore(
-    drive_name: str = typer.Option(os.environ.get('PYTP_DEV', 'lto9'), "--drive", "-d", help="Name of the tape drive"),
-    target_dir: str = typer.Argument(".", help="Target directory for restored files"),
+    drive_name   : str = typer.Option(os.environ.get('PYTP_DEV', 'lto9'), "--drive", "-d", help="Name of the tape drive"),
+    target_dir   : str = typer.Argument(".", help="Target directory for restored files"),
 ):
     """Restores files from tape to a specified directory."""
     result = TapeOperations(drive_name).restore_files(target_dir)

@@ -26,12 +26,12 @@ class TapeLibraryOperations:
         Args:
             library_name (str): The name of the tape library to operate on.
         """
-        config_manager          = ConfigManager()
+        self.config_manager     = ConfigManager()
         self.library_name       = library_name
-        library_details         = config_manager.get_tape_library_details(library_name)
-        self.drive_name_mapping = {str(index): drive_name for index, drive_name in enumerate(library_details["drives"])}
+        self.library_details    = self.config_manager.get_tape_library_details(library_name)
+        self.drive_name_mapping = {str(index): drive_name for index, drive_name in enumerate(self.library_details["drives"])}
 
-        self.device_path        = library_details.get('device_path')
+        self.device_path        = self.library_details.get('device_path')
 
 
     def run_mtx_command(self, command, verbose: bool = False):
@@ -311,5 +311,23 @@ class TapeLibraryOperations:
         result = self.run_mtx_command(command, verbose=True)
         return result
 
+
+    def get_tape_label_from_drive(self, device_path):
+        # Fetch the current status of the tape library
+        tape_library_contents = self.list_tapes()
+
+        # Find the tape in the drive and return its label
+        drive_info = self.config_manager.get_tape_drive_details(device_path = device_path)
+
+        if drive_info is None:
+            return None
+        
+        drive_name = drive_info.get('name')
+
+        for a_drive_info in tape_library_contents['drives'].values():
+            if a_drive_info.get('name') == drive_name:
+                return a_drive_info.get('volume_tag')
+
+        return None  # Return None if no label is found
     
 

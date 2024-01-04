@@ -38,7 +38,7 @@ class TapeOperations:
         """
         config_manager     = ConfigManager()
         self.drive_name    = drive_name
-        tape_details       = config_manager.get_tape_drive_details(drive_name)
+        tape_details       = config_manager.get_tape_drive_details(drive_name = drive_name)
         self.device_path   = tape_details.get('device_path')
         self.block_size    = tape_details.get('block_size', 2048)  # Default block size if not specified
         self.tar_dir       = config_manager.get_tar_dir()
@@ -63,7 +63,7 @@ class TapeOperations:
         with any operations. It provides a safeguard against operations on non-configured or
         non-existent drives.
         """        
-        device_path  = ConfigManager().get_tape_drive_config(self.drive_name)
+        device_path  = ConfigManager().get_tape_drive_config(drive_name=self.drive_name)
 
         if not device_path:
             typer.echo("Tape drive not found.")
@@ -472,7 +472,7 @@ class TapeOperations:
                 self.skip_file_markers(1, False)
 
 
-    def backup_directories(self, directories: list, label = None, strategy="direct", incremental=False, max_concurrent_tars: int = 2, memory_buffer = 6, memory_buffer_percent = 40):
+    def backup_directories(self, directories: list, library_name = None, label = None, job = None, strategy="direct", incremental=False, max_concurrent_tars: int = 2, memory_buffer = 6, memory_buffer_percent = 40):
         """
         Initiates the backup process for the specified directories with the given strategy.
 
@@ -481,7 +481,9 @@ class TapeOperations:
 
         Parameters:
             directories (list): A list of directories (or files) to be backed up.
+            library_name (str, optional): The name of the tape library to be used for the backup. Defaults to None.
             label (str, optional): The label to be used for the backup. Defaults to None.
+            job (str, optional): The job name to be used for the backup. Defaults to None.
             strategy (str, optional): The backup strategy to use. Options include 'direct', 'tar', and 'dd'.
                                       Default is 'direct'.
             incremental (bool, optional): If True, performs an incremental backup. Default is False.
@@ -499,7 +501,7 @@ class TapeOperations:
         if not self.is_tape_ready():
             return "The tape drive is not ready."
 
-        tape_backup = TapeBackup(self, self.device_path, self.block_size, self.tar_dir, self.snapshot_dir, label, strategy, incremental, max_concurrent_tars, memory_buffer, memory_buffer_percent)
+        tape_backup = TapeBackup(self, self.device_path, self.block_size, self.tar_dir, self.snapshot_dir, library_name, label, job, strategy, incremental, max_concurrent_tars, memory_buffer, memory_buffer_percent)
 
         # Set up signal handling
         signal.signal(signal.SIGINT, lambda sig, frame: tape_backup.cleanup_temp_files())

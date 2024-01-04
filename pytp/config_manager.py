@@ -68,12 +68,13 @@ class ConfigManager:
         return value
 
 
-    def get_tape_drive_config(self, drive_name=None) -> str:
+    def get_tape_drive_config(self, drive_name=None, device_path=None) -> str:
         """
         Retrieve the device path of a specified tape drive from the configuration.
 
         Args:
             drive_name (str, optional): The name of the tape drive. Defaults to None.
+            device_path (str, optional): The device path of the tape drive. Defaults to None.
 
         Returns:
             str: The device path of the tape drive.
@@ -82,17 +83,22 @@ class ConfigManager:
             for drive in self.config.get('tape_drives', []):
                 if drive['name'] == drive_name:
                     return drive['device_path']
+        elif device_path:
+            for drive in self.config.get('tape_drives', []):
+                if drive['device_path'] == device_path:
+                    return drive['device_path']
         else:
             # Return the default drive if no name is provided
             return self.config.get('tape_drives', [{}])[0].get('device_path', '/dev/nst0')
 
 
-    def get_tape_drive_details(self, drive_name=None):
+    def get_tape_drive_details(self, drive_name=None, device_path=None):
         """
         Retrieve the details of a specified tape drive from the configuration.
 
         Args:
             drive_name (str, optional): The name of the tape drive. Defaults to None.
+            device_path (str, optional): The device path of the tape drive. Defaults to None.
 
         Returns:
             Dict[str, Any]: A dictionary containing the details of the tape drive.
@@ -100,6 +106,10 @@ class ConfigManager:
         if drive_name:
             for drive in self.config.get('tape_drives', []):
                 if drive['name'] == drive_name:
+                    return drive
+        elif device_path:
+            for drive in self.config.get('tape_drives', []):
+                if drive['device_path'] == device_path:
                     return drive
         else:
             # Return the default drive details if no name is provided
