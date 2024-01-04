@@ -371,6 +371,7 @@ app.command(name="v")(verify)
 def list(
     library_name: str = typer.Option(os.environ.get('PYTP_LIB', 'msl2024'), "--library", "-l", help="Name of the tape drive"),
 ):
+    """Lists the tapes in the tape library"""
     tlo = TapeLibraryOperations(library_name)
     tape_library_contents = tlo.list_tapes()
     tlo.print_tape_library_output(tape_library_contents)
@@ -385,6 +386,7 @@ def load(
     drive_name  : str = typer.Option(os.environ.get('PYTP_DEV', 'lto9'), "--drive", "-d", help="Name of the tape drive"),
     slot_number : int = typer.Argument(..., help="Slot number to load")
 ):
+    """Loads a tape into the tape drive"""
     tlo = TapeLibraryOperations(library_name)
     result = tlo.load_tape(drive_name, slot_number)
     typer.echo(result)
@@ -399,6 +401,7 @@ def unload(
     drive_name  : str = typer.Option(os.environ.get('PYTP_DEV', 'lto9'), "--drive", "-d", help="Name of the tape drive"),
     slot_number : int = typer.Argument(None, help="Slot number to unload into, defaut: original slot")
 ):
+    """Unloads a tape from the tape drive"""
     tlo = TapeLibraryOperations(library_name)
     result = tlo.unload_tape(drive_name, slot_number)
     typer.echo(result)
@@ -413,6 +416,7 @@ def move(
     from_slot: str = typer.Argument(..., help="Slot to move from"),
     to_slot  : str = typer.Argument(..., help="Slot to move to"),
 ):
+    """Moves a tape from one slot to another"""
     tlo = TapeLibraryOperations(library_name)
     result = tlo.move_tape(from_slot, to_slot)
     typer.echo(result)
