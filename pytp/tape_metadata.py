@@ -1,6 +1,7 @@
 # tape_metadata.py
 import json
 import os
+from datetime import datetime
 
 class TapeMetadata:
     """
@@ -72,6 +73,8 @@ class TapeMetadata:
         task_id = self.progress.add_task(f"Scanning {directory}", total=self.count_files(directory))
 
         current_state = self.scan_directory(directory, task_id)
+        current_timestamp = datetime.now().isoformat()  # Get current timestamp as an ISO format string
+
         with self.progress:
 
             if incremental:
@@ -79,9 +82,19 @@ class TapeMetadata:
                 if not changed_files:
                     return False, {}
                 incremental_files = {filepath: current_state[filepath] for filepath in changed_files}
-                backup_entry = {'type': 'incremental', 'label': self.label, 'files': incremental_files}
+                backup_entry = {
+                    'type': 'incremental',
+                    'label': self.label,
+                    'timestamp': current_timestamp,
+                    'files': incremental_files
+                }
             else:
-                backup_entry = {'type': 'full', 'label': self.label, 'files': current_state}
+                backup_entry = {
+                    'type': 'full',
+                    'label': self.label,
+                    'timestamp': current_timestamp,
+                    'files': current_state
+                }
                 self.backup_histories[directory] = []  # Reset history for a full backup
 
         self.progress.remove_task(task_id)
