@@ -51,7 +51,7 @@ Here are some examples of how PyTP can be used:
   ```
 
 This uses status files in the `snapshot_dir` as per `config.json`. You can label those
-snapshot files (see the `--label` command line option). If you do a non-incremental
+backups (see the `--label` command line option; if not, and if we have a tape changer, it will use the tape changer to detect the label), and you can also prefix the snapshot files with a job name (see the `--job` command line option). If you do a non-incremental
 backup for a given label, the previous snapshot file will be overwritten
 (obviously this part is still under development...).
 
