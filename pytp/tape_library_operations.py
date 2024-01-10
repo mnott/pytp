@@ -289,6 +289,11 @@ class TapeLibraryOperations:
         # Execute the mtx command to unload the tape
         command = ["unload", target_slot, drive_number]
         result = self.run_mtx_command(command, verbose=True)
+
+        # Ensure a string is returned
+        if "Error" in result:
+            return f"Error unloading tape from drive {drive_name}: {result}"
+        
         return result
 
 
