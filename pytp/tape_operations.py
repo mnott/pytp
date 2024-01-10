@@ -8,6 +8,11 @@ import signal
 from pytp.config_manager import ConfigManager
 from pytp.tape_backup    import TapeBackup
 
+import fcntl
+import errno
+import time
+import re
+
 class TapeOperations:
     """
     TapeOperations class encapsulates various operations related to tape drives.
@@ -544,19 +549,57 @@ class TapeOperations:
             os.makedirs(target_dir, exist_ok=True)
 
         typer.echo(f"Restoring files from {self.device_path} to {target_dir}...")
-        command = ["tar", "-xvf", self.device_path, "-b", str(self.block_size), "-C", target_dir]
+        command = ["tar", "-xvMf", self.device_path, "-b", str(self.block_size), "-C", target_dir]
+        command = " ".join(command)
 
-        process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        print (command)
 
-        line_count = 0
+        process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+
+        # Set the stdout and stderr to non-blocking
+        flags_stdout = fcntl.fcntl(process.stdout, fcntl.F_GETFL)
+        flags_stderr = fcntl.fcntl(process.stderr, fcntl.F_GETFL)
+        fcntl.fcntl(process.stdout, fcntl.F_SETFL, flags_stdout | os.O_NONBLOCK)
+        fcntl.fcntl(process.stderr, fcntl.F_SETFL, flags_stderr | os.O_NONBLOCK)
+
         try:
-            for line in process.stdout:
-                print(line, end='')  # Print each line immediately
-                line_count += 1
+            while True:
+                # Read from stdout
+                try:
+                    output = process.stdout.readline()
+                    if output:
+                        print(output.strip())
+                except IOError as e:
+                    if e.errno != errno.EAGAIN and e.errno != errno.EWOULDBLOCK:
+                        raise
+
+                # Check stderr for the tape change prompt
+                try:
+                    error_output = process.stderr.readline()
+                    if error_output and "and hit return" in error_output:  # Adjust the message as per actual tar prompt
+                        print("Please change the tape and press Enter to continue...")
+                        input()  # Wait for user input
+                        # Send a SIGCONT signal to resume the tar process
+                        os.kill(process.pid, signal.SIGCONT)
+                    elif error_output:
+                        print(error_output.strip(), end='')
+                except IOError as e:
+                    if e.errno != errno.EAGAIN and e.errno != errno.EWOULDBLOCK:
+                        raise
+
+                if process.poll() is not None:
+                    break  # Process has finished
+
+                time.sleep(0.1)  # Avoid busy waiting
+
+            if process.returncode != 0:
+                typer.echo(f"Error occurred during restore. Error code: {process.returncode}")
+
         except Exception as e:
-            typer.echo(f"Error occurred during restore of {target_dir}: {e}")
+            typer.echo(f"Error occurred during restore: {e}")
         finally:
             process.stdout.close()
+            process.stderr.close()
             self.skip_file_markers(1, False)
             typer.echo(f"Restore of {target_dir} completed successfully.")
 

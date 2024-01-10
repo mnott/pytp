@@ -227,6 +227,12 @@ class TapeLibraryOperations:
         # Retrieve the current status to map drive names to numbers
         current_status = self.list_tapes()
 
+        # If we were called by mbuffer, we can get the number of tape changes
+        # that were done so far using MBUFFER_VOL
+        mbuffer_env = os.environ.get('MBUFFER_VOL')
+
+        # print(f"Volume marker for mbuffer: {mbuffer_env}")
+
         # Find the drive number corresponding to the drive name
         drive_number = None
         for num, info in current_status['drives'].items():

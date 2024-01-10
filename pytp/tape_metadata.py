@@ -52,6 +52,7 @@ class TapeMetadata:
         backup_json = self.get_json_filename(directory)
         if os.path.exists(backup_json):
             with open(backup_json, 'r') as file:
+                print(f"Loading backup history for {backup_json}")
                 self.backup_histories[directory] = json.load(file)
         else:
             self.backup_histories[directory] = []
