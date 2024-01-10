@@ -20,7 +20,7 @@ class TapeMetadata:
     - backup_histories: A dictionary mapping directories to their backup histories.
     """    
 
-    def __init__(self, tape_operations, progress, snapshot_dir, label=None, job=None):
+    def __init__(self, tape_operations, progress, snapshot_dir, label=None, job=None, strategy=None, block_size=None):
         """
         Initializes the TapeMetadata class.
 
@@ -36,6 +36,8 @@ class TapeMetadata:
         self.snapshot_dir     = snapshot_dir
         self.label            = label
         self.job              = job
+        self.strategy         = strategy
+        self.block_size       = block_size
         self.backup_histories = {}  # key: directory, value: backup history
 
 
@@ -87,6 +89,8 @@ class TapeMetadata:
                     'type': 'incremental',
                     'label': self.label,
                     'timestamp': current_timestamp,
+                    'strategy': self.strategy,
+                    'block_size': self.block_size,
                     'files': incremental_files
                 }
             else:
@@ -94,6 +98,8 @@ class TapeMetadata:
                     'type': 'full',
                     'label': self.label,
                     'timestamp': current_timestamp,
+                    'strategy': self.strategy,
+                    'block_size': self.block_size,
                     'files': current_state
                 }
                 self.backup_histories[directory] = []  # Reset history for a full backup

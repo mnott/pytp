@@ -104,7 +104,7 @@ class TapeBackup:
         self.running               = True
         self.semaphore             = threading.Semaphore(max_concurrent_tars)
         self.progress              = Progress()
-        self.metadata              = TapeMetadata(tape_operations=self.tape_operations, progress = self.progress, snapshot_dir=self.snapshot_dir, label=self.label, job=self.job)
+        self.metadata              = TapeMetadata(tape_operations=self.tape_operations, progress = self.progress, snapshot_dir=self.snapshot_dir, label=self.label, strategy=self.strategy, block_size=self.block_size, job=self.job)
         self.tar_to_directory_mapping = {}  # Maps tar paths to their directories
 
 
