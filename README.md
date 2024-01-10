@@ -242,12 +242,12 @@ Look at the configs directory. It contains a file `config.json`:
         {
             "name": "lto9",
             "device_path": "/dev/nst0",
-            "block_size": 2048
+            "block_size": 524288
         },
         {
             "name": "lto6",
             "device_path": "/dev/nst1",
-            "block_size": 2048
+            "block_size": 524288
         }
     ],
     "tape_libraries": [

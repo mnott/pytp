@@ -40,7 +40,7 @@ class TapeOperations:
         self.drive_name    = drive_name
         tape_details       = config_manager.get_tape_drive_details(drive_name = drive_name)
         self.device_path   = tape_details.get('device_path')
-        self.block_size    = tape_details.get('block_size', 2048)  # Default block size if not specified
+        self.block_size    = tape_details.get('block_size', 524288)  # Default block size if not specified
         self.tar_dir       = config_manager.get_tar_dir()
         self.snapshot_dir  = config_manager.get_snapshot_dir()
 
