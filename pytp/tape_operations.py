@@ -166,7 +166,14 @@ class TapeOperations:
         elif "Device or resource busy" in status_output:
             return "The tape drive is busy"
 
-        status_output += self.run_command(["tell"])
+        block_position = self.run_command(["tell"])
+        status_output += block_position
+        match = re.search(r"At block (\d+).", block_position)
+        if match:
+            block_number = match.group(1)
+            capacity_used = round(int(block_number) * int(self.block_size) / 1024**3)
+            status_output += f"Capacity used: {capacity_used} GB"
+
         return status_output
 
 
