@@ -242,6 +242,12 @@ class TapeLibraryOperations:
 
         if drive_number is None:
             return f"Drive '{drive_name}' not found in the tape library."
+        
+        # Check if a tape is already loaded in the drive
+        if current_status['drives'][drive_number]['slot_loaded'] is not None:
+            unload_result = self.unload_tape(drive_name)
+            if "Error" in unload_result:
+                return unload_result  # Return error message if unload fails
 
         # Execute the mtx command to load the tape
         command = ["load", str(slot_number), drive_number]
