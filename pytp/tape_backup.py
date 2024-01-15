@@ -488,10 +488,12 @@ class TapeBackup:
 
             tar_options = ["tar", "-cvf", "-", "-T", backup_files_list_path]
             tar_options.extend(["-b", str(self.block_size)])
-            backup_command = " ".join(tar_options) + f" | mbuffer -P {self.memory_buffer_percent} -m {self.memory_buffer} -s {self.block_size} -v 1 -o {self.device_path}"
+            backup_command = " ".join(tar_options) + f" | mbuffer -P {self.memory_buffer_percent} -A \"pytp load 18\" -m {self.memory_buffer} -s {self.block_size} -v 1 -o {self.device_path}"
 
             current_tape_pos = self.tape_operations.show_tape_position()
             self.metadata.update_tape_position_and_save(directory, current_tape_pos)
+
+            print(f"Backing up {directory} to {self.device_path}... {backup_command}")
 
             # Execute the backup command
             process = subprocess.Popen(backup_command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
