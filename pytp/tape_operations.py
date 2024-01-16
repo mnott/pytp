@@ -549,7 +549,10 @@ class TapeOperations:
             os.makedirs(target_dir, exist_ok=True)
 
         typer.echo(f"Restoring files from {self.device_path} to {target_dir}...")
-        command = ["tar", "-xvMf", self.device_path, "-b", str(self.block_size), "-C", target_dir]
+        command = ["mbuffer", "-i", self.device_path, "-s", str(self.block_size), "-m", "6G", "-p", "10", "-f", "-n", "2", "-A", "\"pytp load 18\"", "|", "tar", "-b", str(self.block_size), "-xvf", "-"]    
+
+        #mbuffer -i /dev/nst1 -s 524288 -m 6G -p 10 -f -n 2 -A "pytp load 18" | tar -b 524288 -xvf -
+        #command = ["tar", "-xvMf", self.device_path, "-b", str(self.block_size), "-C", target_dir]
         command = " ".join(command)
 
         print (command)
