@@ -2,6 +2,7 @@
 __pycache__
 .vscode
 .venv
+.claude
 PyTP.egg-info
 build
 dist
