@@ -484,7 +484,7 @@ class TapeOperations:
                 self.skip_file_markers(1, False)
 
 
-    def backup_directories(self, directories: list, library_name = None, label = None, job = None, strategy="direct", incremental=False, max_concurrent_tars: int = 2, memory_buffer = 6, memory_buffer_percent = 40):
+    def backup_directories(self, directories: list, library_name = None, label = None, job = None, strategy="direct", incremental=False, max_concurrent_tars: int = 2, memory_buffer = 16, memory_buffer_percent = 20, use_double_buffer = True, low_water_mark = 10):
         """
         Initiates the backup process for the specified directories with the given strategy.
 
@@ -501,8 +501,10 @@ class TapeOperations:
             incremental (bool, optional): If True, performs an incremental backup. Default is False.
             max_concurrent_tars (int, optional): The maximum number of concurrent tar operations allowed. 
                                                  Default is 2.
-            memory_buffer (int, optional): The size of the memory buffer to use in GB. Default is 6 GB.
-            memory_buffer_percent (int, optional): The percentage of the memory buffer to be used. Default is 40%.
+            memory_buffer (int, optional): The size of the memory buffer to use in GB. Default is 16 GB.
+            memory_buffer_percent (int, optional): The percentage of the memory buffer to be used. Default is 20%.
+            use_double_buffer (bool, optional): If True, uses double-buffering with water mark control. Default is True.
+            low_water_mark (int, optional): The low water mark percentage for buffer refill. Default is 10%.
 
         Note:
         This method sets up signal handling to ensure proper cleanup of temporary files in case of an interruption.
@@ -513,7 +515,7 @@ class TapeOperations:
         if not self.is_tape_ready():
             return "The tape drive is not ready."
 
-        tape_backup = TapeBackup(self, self.device_path, self.block_size, self.tar_dir, self.snapshot_dir, library_name, label, job, strategy, incremental, max_concurrent_tars, memory_buffer, memory_buffer_percent)
+        tape_backup = TapeBackup(self, self.device_path, self.block_size, self.tar_dir, self.snapshot_dir, library_name, label, job, strategy, incremental, max_concurrent_tars, memory_buffer, memory_buffer_percent, use_double_buffer, low_water_mark)
 
         # Set up signal handling
         signal.signal(signal.SIGINT, lambda sig, frame: tape_backup.cleanup_temp_files())

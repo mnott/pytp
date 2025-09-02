@@ -661,9 +661,11 @@ def backup(
     label                : str       = typer.Option(None,     "--label", "-l",               help="Label for the tape (if using a library, it will be ignored)"),
     strategy             : str       = typer.Option("direct", "--strategy", "-s",            help="Backup strategy: direct or tar (via memory buffer), or dd (without memory buffer)"),
     incremental          : bool      = typer.Option(False,    "--incremental", "-i",         help="Perform an incremental backup"),
-    max_concurrent_tars  : int       = typer.Option(2,        "--max-concurrent-tars", "-m", help="Maximum number of concurrent tar operations"),
-    memory_buffer        : int       = typer.Option(6,        "--memory_buffer", "-mem",     help="Memory buffer size in GB"),
-    memory_buffer_percent: int       = typer.Option(6,        "--memory_buffer_percent", "-memp", help="Fill grade of memory buffer before streaming to tape"),
+    max_concurrent_tars  : int       = typer.Option(2,        "--max-concurrent-tars", "-m", help="Maximum number of concurrent tar operations"),      
+    memory_buffer        : int       = typer.Option(16,       "--memory_buffer", "-mem",     help="Memory buffer size in GB"),
+    memory_buffer_percent: int       = typer.Option(20,       "--memory_buffer_percent", "-memp", help="Fill grade of memory buffer before streaming to tape"),
+    use_double_buffer    : bool      = typer.Option(True,     "--double-buffer/--no-double-buffer", help="Use double-buffering with named pipes for better flow control"),
+    low_water_mark       : int       = typer.Option(10,       "--low-water-mark", "-lwm",    help="Low water mark percentage for second buffer stage (only used with double-buffer)"),
     directories          : List[str] = typer.Argument(..., help="List of directories (or files) to backup"),
 ):
     """
@@ -697,7 +699,7 @@ def backup(
 
     The result of the backup operation (success message or error information) is printed to the console.
     """
-    result = TapeOperations(drive_name).backup_directories(directories, library_name=library_name, label=label, job=job, strategy=strategy, incremental=incremental, max_concurrent_tars=max_concurrent_tars, memory_buffer=memory_buffer, memory_buffer_percent=memory_buffer_percent)
+    result = TapeOperations(drive_name).backup_directories(directories, library_name=library_name, label=label, job=job, strategy=strategy, incremental=incremental, max_concurrent_tars=max_concurrent_tars, memory_buffer=memory_buffer, memory_buffer_percent=memory_buffer_percent, use_double_buffer=use_double_buffer, low_water_mark=low_water_mark)
     typer.echo(result)
 
 # Alias for the backup command

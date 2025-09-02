@@ -1,6 +1,6 @@
 {
-    "tar_dir": "/data/temp/tars",
-    "snapshot_dir": "/data/temp/snapshots",
+    "tar_dir": "/data-intern/Backup/tmp/tars",
+    "snapshot_dir": "/data-intern/Backup/tmp/snapshots",
     "tape_drives": [
         {
             "name": "lto9",

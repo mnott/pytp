@@ -10,6 +10,8 @@ from rich.progress import Progress
 from pytp.tape_metadata import TapeMetadata
 from pytp.tape_library_operations import TapeLibraryOperations
 
+MBUFFER_PATH = "/pgm/scripts/pytp-dev/mbuffer/mbuffer-20250809/mbuffer"
+
 class TapeBackup:
     """
     The TapeBackup class provides functionalities to backup directories to a tape drive.
@@ -55,7 +57,7 @@ class TapeBackup:
     STRATEGY_TAR    = 'tar'    # creates tar files first, then writes to tape, using memory buffer
     STRATEGY_DD     = 'dd'     # creates tar files first, then writes to tape using dd, without memory buffer
 
-    def __init__(self, tape_operations, device_path, block_size, tar_dir, snapshot_dir, library_name = None, label = None, job = None, strategy = "direct", incremental = False, max_concurrent_tars = 2, memory_buffer = 6, memory_buffer_percent = 40):
+    def __init__(self, tape_operations, device_path, block_size, tar_dir, snapshot_dir, library_name = None, label = None, job = None, strategy = "direct", incremental = False, max_concurrent_tars = 2, memory_buffer = 16, memory_buffer_percent = 20, use_double_buffer = True, low_water_mark = 10):
         """
         Initializes the TapeBackup class.
 
@@ -69,8 +71,10 @@ class TapeBackup:
             library_name               (str): The name of the tape library.
             label                      (str): The label of the tape.
             job                        (str): The job name of the backup.
-            memory_buffer              (int): The size of the memory buffer to be used for tar and dd operations.
-            memory_buffer_percent      (int): The percentage the memory buffer needs to be filled before streaming to tape.
+            memory_buffer              (int): The size of the memory buffer to be used for tar and dd operations. Default is 16GB.
+            memory_buffer_percent      (int): The percentage the memory buffer needs to be filled before streaming to tape. Default is 20%.
+            use_double_buffer         (bool): If True, uses double-buffering with water mark control. Default is True.
+            low_water_mark             (int): The low water mark percentage for buffer refill. Default is 10%.
         """
         self.tape_operations       = tape_operations    
         self.device_path           = device_path
@@ -78,6 +82,8 @@ class TapeBackup:
         self.max_concurrent_tars   = max_concurrent_tars
         self.memory_buffer         = f"{memory_buffer}G"
         self.memory_buffer_percent = memory_buffer_percent
+        self.use_double_buffer     = use_double_buffer
+        self.low_water_mark        = low_water_mark
         self.tar_dir               = tar_dir
         self.snapshot_dir          = snapshot_dir
         self.library_name          = library_name
@@ -488,7 +494,10 @@ class TapeBackup:
 
             tar_options = ["tar", "-cvf", "-", "-T", backup_files_list_path]
             tar_options.extend(["-b", str(self.block_size)])
-            backup_command = " ".join(tar_options) + f" | mbuffer -P {self.memory_buffer_percent} -A \"pytp load 18\" -m {self.memory_buffer} -s {self.block_size} -v 1 -o {self.device_path}"
+            if self.use_double_buffer:
+                backup_command = " ".join(tar_options) + f" | {MBUFFER_PATH} -P {self.memory_buffer_percent} -p {self.low_water_mark} -A \"pytp load 18\" -m {self.memory_buffer} -s {self.block_size} -v 1 -o {self.device_path}"
+            else:
+                backup_command = " ".join(tar_options) + f" | mbuffer -P {self.memory_buffer_percent} -A \"pytp load 18\" -m {self.memory_buffer} -s {self.block_size} -v 1 -o {self.device_path}"
 
             current_tape_pos = self.tape_operations.show_tape_position()
             self.metadata.update_tape_position_and_save(directory, current_tape_pos)
