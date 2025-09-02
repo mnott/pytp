@@ -147,15 +147,20 @@ class TapeBackup:
             needs_backup, backup_entry = self.metadata.prepare_backup_entry(directory, self.incremental)
 
             if needs_backup:
-                # Write files to be backed up to a list file for tar
-                backup_files_list_path = self.write_files_to_temp_list(backup_entry['files'])
-
-                # Generate tar file
-                tar_command = ["tar", "-cvf", tar_path, "-T", backup_files_list_path]
-                tar_command.extend(["-b", str(self.block_size)])
-                print(f"Generating tar file for {directory}... {tar_command}")
-                subprocess.run(tar_command)
-                os.remove(backup_files_list_path)
+                if backup_entry['type'] == 'full':
+                    # Full backup: use -C to backup entire directory
+                    tar_command = ["tar", "-cvf", tar_path, "-C", directory, "."]
+                    tar_command.extend(["-b", str(self.block_size)])
+                    print(f"Generating tar file for {directory}... {tar_command}")
+                    subprocess.run(tar_command)
+                else:
+                    # Incremental backup: use file list
+                    backup_files_list_path = self.write_files_to_temp_list(backup_entry['files'])
+                    tar_command = ["tar", "-cvf", tar_path, "-T", backup_files_list_path]
+                    tar_command.extend(["-b", str(self.block_size)])
+                    print(f"Generating tar file for {directory}... {tar_command}")
+                    subprocess.run(tar_command)
+                    os.remove(backup_files_list_path)
     
                 # After generating tar file, add the mapping
                 self.tar_to_directory_mapping[tar_path] = directory
@@ -490,10 +495,16 @@ class TapeBackup:
                 typer.echo(f"No changes in {directory}, skipping backup.")
                 continue
 
-            backup_files_list_path = self.write_files_to_temp_list(backup_entry['files'])
-
-            tar_options = ["tar", "-cvf", "-", "-T", backup_files_list_path]
-            tar_options.extend(["-b", str(self.block_size)])
+            if backup_entry['type'] == 'full':
+                # Full backup: use -C to backup entire directory
+                tar_options = ["tar", "-cvf", "-", "-C", directory, "."]
+                tar_options.extend(["-b", str(self.block_size)])
+                backup_files_list_path = None  # No temp file needed for full backup
+            else:
+                # Incremental backup: use file list
+                backup_files_list_path = self.write_files_to_temp_list(backup_entry['files'])
+                tar_options = ["tar", "-cvf", "-", "-T", backup_files_list_path]
+                tar_options.extend(["-b", str(self.block_size)])
             if self.use_double_buffer:
                 backup_command = " ".join(tar_options) + f" | {MBUFFER_PATH} -P {self.memory_buffer_percent} -p {self.low_water_mark} -A \"pytp load 18\" -m {self.memory_buffer} -s {self.block_size} -v 1 -o {self.device_path}"
             else:
@@ -507,8 +518,14 @@ class TapeBackup:
             # Execute the backup command
             process = subprocess.Popen(backup_command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             try:
+                import datetime
                 for line in process.stderr:
-                    print(line, end='')  # Printing stderr for monitoring
+                    # Add timestamp to mbuffer status lines and file listings
+                    timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    if line.startswith('in @') or line.startswith('/data/') or 'tar:' in line:
+                        print(f"[{timestamp}] {line}", end='')
+                    else:
+                        print(line, end='')  # Print other lines unchanged
                 process.wait()
                 if process.returncode != 0:
                     typer.echo(f"Error occurred during backup of {directory}. Error code: {process.returncode}")
@@ -517,7 +534,8 @@ class TapeBackup:
                 typer.echo(f"Error occurred during backup of {directory}: {e}")
             finally:
                 process.stderr.close()
-                os.remove(backup_files_list_path)  # Remove the temporary file after use
+                if backup_files_list_path:  # Only remove temp file if it was created
+                    os.remove(backup_files_list_path)
                 typer.echo(f"Backup of {directory} completed successfully.")
 
         return "All backups completed."

@@ -72,40 +72,54 @@ class TapeMetadata:
             tuple: (bool, dict) - A boolean indicating if backup is needed, and the backup entry.
         """        
         self.load_backup_history(directory)
-        history = self.backup_histories.get(directory, [])
-        task_id = self.progress.add_task(f"Scanning {directory}", total=self.count_files(directory))
-
-        current_state = self.scan_directory(directory, task_id)
         current_timestamp = datetime.now().isoformat()  # Get current timestamp as an ISO format string
 
-        with self.progress:
-
-            if incremental:
-                changed_files = self.get_changed_files_list(directory, history)
-                if not changed_files:
-                    return False, {}
-                incremental_files = {filepath: current_state[filepath] for filepath in changed_files}
-                backup_entry = {
-                    'type': 'incremental',
-                    'label': self.label,
-                    'timestamp': current_timestamp,
-                    'strategy': self.strategy,
-                    'block_size': self.block_size,
-                    'files': incremental_files
-                }
-            else:
+        if incremental:
+            # Only scan for incremental backups if there's existing history to compare against
+            history = self.backup_histories.get(directory, [])
+            if not history:
+                # No previous backup history, treat as full backup
                 backup_entry = {
                     'type': 'full',
                     'label': self.label,
                     'timestamp': current_timestamp,
                     'strategy': self.strategy,
                     'block_size': self.block_size,
-                    'files': current_state
+                    'files': {}  # Will be populated during actual backup
                 }
                 self.backup_histories[directory] = []  # Reset history for a full backup
-
-        self.progress.remove_task(task_id)
-
+            else:
+                # Scan to determine changed files for incremental backup
+                task_id = self.progress.add_task(f"Scanning {directory}", total=self.count_files(directory))
+                current_state = self.scan_directory(directory, task_id)
+                
+                with self.progress:
+                    changed_files = self.get_changed_files_list(directory, history)
+                    if not changed_files:
+                        self.progress.remove_task(task_id)
+                        return False, {}
+                    incremental_files = {filepath: current_state[filepath] for filepath in changed_files}
+                    backup_entry = {
+                        'type': 'incremental',
+                        'label': self.label,
+                        'timestamp': current_timestamp,
+                        'strategy': self.strategy,
+                        'block_size': self.block_size,
+                        'files': incremental_files
+                    }
+                
+                self.progress.remove_task(task_id)
+        else:
+            # Full backup - no scanning needed, metadata collected during backup
+            backup_entry = {
+                'type': 'full',
+                'label': self.label,
+                'timestamp': current_timestamp,
+                'strategy': self.strategy,
+                'block_size': self.block_size,
+                'files': {}  # Will be populated during actual backup
+            }
+            self.backup_histories[directory] = []  # Reset history for a full backup
 
         self.update_backup_entry(directory, backup_entry)
         return True, backup_entry
