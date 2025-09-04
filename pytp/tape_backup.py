@@ -487,6 +487,26 @@ class TapeBackup:
         - It assumes the tape device and block size have been correctly configured.
         - The method handles both incremental and full backups based on the provided settings.
         """        
+        # Create log file for direct backups with timestamp
+        import datetime
+        overall_start_time = datetime.datetime.now()
+        timestamp_str = overall_start_time.strftime("%Y%m%d_%H%M%S")
+        backup_log_path = os.path.join(self.tar_dir, f"direct_backup_{timestamp_str}.log")
+        
+        # Get initial tape diagnostics
+        initial_diagnostics = self.get_tape_diagnostics()
+        
+        with open(backup_log_path, 'w') as log_file:
+            log_file.write(f"\n{'='*80}\n")
+            log_file.write(f"Direct Backup Session Started: {overall_start_time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+            log_file.write(f"Device: {self.device_path}\n")
+            log_file.write(f"Buffer: {self.memory_buffer}, High: {self.memory_buffer_percent}%, Low: {self.low_water_mark}%\n")
+            log_file.write(f"Directories to backup: {directories}\n")
+            log_file.write(f"\n--- TAPE DIAGNOSTICS (BEFORE) ---\n")
+            log_file.write(self.format_diagnostics(initial_diagnostics))
+            log_file.write(f"\n{'='*80}\n\n")
+            log_file.flush()
+        
         for directory in directories:
             typer.echo(f"Backing up directory {directory} to {self.device_path}...")
             needs_backup, backup_entry = self.metadata.prepare_backup_entry(directory, self.incremental)
@@ -515,32 +535,251 @@ class TapeBackup:
 
             print(f"Backing up {directory} to {self.device_path}... {backup_command}")
 
+            # Log backup start for this directory
+            dir_start_time = datetime.datetime.now()
+            with open(backup_log_path, 'a') as log_file:
+                log_file.write(f"\n--- Backup of {directory} started at {dir_start_time.strftime('%Y-%m-%d %H:%M:%S')} ---\n")
+                log_file.write(f"Backup type: {backup_entry['type']}\n")
+                log_file.write(f"Command: {backup_command}\n")
+                log_file.flush()
+            
             # Execute the backup command
             process = subprocess.Popen(backup_command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-            try:
-                import datetime
-                for line in process.stderr:
-                    # Add timestamp to mbuffer status lines and file listings
-                    timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                    if line.startswith('in @') or line.startswith('/data/') or 'tar:' in line:
-                        print(f"[{timestamp}] {line}", end='')
-                    else:
-                        print(line, end='')  # Print other lines unchanged
-                process.wait()
-                if process.returncode != 0:
-                    typer.echo(f"Error occurred during backup of {directory}. Error code: {process.returncode}")
-                    continue
-            except Exception as e:
-                typer.echo(f"Error occurred during backup of {directory}: {e}")
-            finally:
-                process.stderr.close()
-                if backup_files_list_path:  # Only remove temp file if it was created
-                    os.remove(backup_files_list_path)
-                typer.echo(f"Backup of {directory} completed successfully.")
-
+            mbuffer_summary = None
+            captured_output = []
+            file_count = 0
+            
+            # Open a separate file list log for this directory with timestamp
+            file_list_path = os.path.join(self.tar_dir, f"backup_files_{timestamp_str}_{directory.replace('/', '_')}.log")
+            with open(file_list_path, 'w') as file_list_log:
+                file_list_log.write(f"File list for backup of {directory}\n")
+                file_list_log.write(f"Started: {dir_start_time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+                file_list_log.write(f"{'='*80}\n")
+                
+                try:
+                    for line in process.stderr:
+                        # Capture all output for logging
+                        captured_output.append(line)
+                        
+                        # Log files being backed up (tar verbose output shows files)
+                        if line.startswith('./') or (line.startswith('/') and not line.startswith('in @')):
+                            file_list_log.write(line)
+                            file_list_log.flush()
+                            file_count += 1
+                        
+                        # Add timestamp to mbuffer status lines and file listings
+                        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        # Match: mbuffer status lines, file paths (starting with . or /), tar messages
+                        if line.startswith('in @') or line.startswith('./') or line.startswith('/') or 'tar:' in line:
+                            print(f"[{timestamp}] {line}", end='')
+                        else:
+                            print(line, end='')  # Print other lines unchanged
+                        
+                        # Capture mbuffer summary line
+                        if line.startswith('summary:'):
+                            mbuffer_summary = line.strip()
+                
+                    process.wait()
+                    dir_end_time = datetime.datetime.now()
+                    dir_duration = dir_end_time - dir_start_time
+                    
+                    # Write summary to file list log
+                    file_list_log.write(f"\n{'='*80}\n")
+                    file_list_log.write(f"Completed: {dir_end_time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+                    file_list_log.write(f"Total files: {file_count}\n")
+                    file_list_log.write(f"Duration: {dir_duration}\n")
+                    
+                    # Log results for this directory
+                    with open(backup_log_path, 'a') as log_file:
+                        log_file.write(f"Backup of {directory} completed at {dir_end_time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+                        log_file.write(f"Duration: {dir_duration}\n")
+                        log_file.write(f"Files backed up: {file_count}\n")
+                        log_file.write(f"File list log: {file_list_path}\n")
+                        log_file.write(f"Return code: {process.returncode}\n")
+                        if mbuffer_summary:
+                            log_file.write(f"MBuffer stats: {mbuffer_summary}\n")
+                        if process.returncode != 0:
+                            log_file.write(f"ERROR: Backup failed with code {process.returncode}\n")
+                            # Log last 10 lines of output for debugging
+                            log_file.write("Last output lines:\n")
+                            for output_line in captured_output[-10:]:
+                                log_file.write(f"  {output_line}")
+                        log_file.write(f"--- End of {directory} backup ---\n\n")
+                        log_file.flush()
+                
+                    if process.returncode != 0:
+                        typer.echo(f"Error occurred during backup of {directory}. Error code: {process.returncode}")
+                        continue
+                except Exception as e:
+                    typer.echo(f"Error occurred during backup of {directory}: {e}")
+                    with open(backup_log_path, 'a') as log_file:
+                        log_file.write(f"EXCEPTION during backup of {directory}: {e}\n")
+                        log_file.flush()
+                finally:
+                    process.stderr.close()
+                    if backup_files_list_path:  # Only remove temp file if it was created
+                        os.remove(backup_files_list_path)
+                    typer.echo(f"Backup of {directory} completed. Files logged: {file_count}")
+        
+        # Get final tape diagnostics
+        final_diagnostics = self.get_tape_diagnostics()
+        
+        # Write session summary
+        overall_end_time = datetime.datetime.now()
+        overall_duration = overall_end_time - overall_start_time
+        with open(backup_log_path, 'a') as log_file:
+            log_file.write(f"\n{'='*80}\n")
+            log_file.write(f"Direct Backup Session Completed: {overall_end_time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+            log_file.write(f"Total Duration: {overall_duration}\n")
+            log_file.write(f"\n--- TAPE DIAGNOSTICS (AFTER) ---\n")
+            log_file.write(self.format_diagnostics(final_diagnostics))
+            
+            # Calculate differences
+            log_file.write(f"\n\n--- CHANGES DURING BACKUP ---\n")
+            if 'write_bytes' in initial_diagnostics and 'write_bytes' in final_diagnostics:
+                bytes_written = final_diagnostics['write_bytes'] - initial_diagnostics['write_bytes']
+                log_file.write(f"  Data written: {self.format_bytes(bytes_written)}\n")
+            if 'write_errors_corrected' in final_diagnostics:
+                initial_errors = initial_diagnostics.get('write_errors_corrected', 0)
+                new_errors = final_diagnostics['write_errors_corrected'] - initial_errors
+                log_file.write(f"  New corrected errors: {new_errors}\n")
+            if 'write_uncorrected' in final_diagnostics:
+                initial_uncorrected = initial_diagnostics.get('write_uncorrected', 0)
+                new_uncorrected = final_diagnostics['write_uncorrected'] - initial_uncorrected
+                if new_uncorrected > 0:
+                    log_file.write(f"  ⚠️  NEW UNCORRECTED ERRORS: {new_uncorrected}\n")
+            if 'write_retries' in final_diagnostics:
+                initial_retries = initial_diagnostics.get('write_retries', 0)
+                new_retries = final_diagnostics['write_retries'] - initial_retries
+                log_file.write(f"  New write retries: {new_retries}\n")
+            
+            log_file.write(f"\nLog file: {backup_log_path}\n")
+            log_file.write(f"{'='*80}\n")
+            log_file.flush()
+        
+        typer.echo(f"\n📊 Backup log saved to: {backup_log_path}")
         return "All backups completed."
 
 
+    def get_tape_diagnostics(self):
+        """
+        Get tape drive diagnostics including error counts and statistics.
+        Returns a dictionary with formatted diagnostic information.
+        """
+        import subprocess
+        diagnostics = {}
+        
+        try:
+            # Get tape status
+            mt_result = subprocess.run(['mt', '-f', self.device_path, 'status'], 
+                                      capture_output=True, text=True, timeout=5)
+            if mt_result.returncode == 0:
+                for line in mt_result.stdout.split('\n'):
+                    if 'Tape block size' in line:
+                        diagnostics['block_size'] = line.strip()
+                    elif 'File number=' in line:
+                        diagnostics['position'] = line.strip()
+            
+            # Get SCSI error counters using sg_logs
+            # Write errors
+            write_result = subprocess.run(['sg_logs', '-p', '0x2', self.device_path], 
+                                        capture_output=True, text=True, timeout=5)
+            if write_result.returncode == 0:
+                for line in write_result.stdout.split('\n'):
+                    if 'Total errors corrected' in line:
+                        val = line.split('=')[-1].strip()
+                        diagnostics['write_errors_corrected'] = int(val) if val.isdigit() else 0
+                    elif 'Total rewrites' in line:
+                        val = line.split('=')[-1].strip()
+                        diagnostics['write_retries'] = int(val) if val.isdigit() else 0
+                    elif 'Total bytes processed' in line:
+                        val = line.split('=')[-1].strip()
+                        diagnostics['write_bytes'] = int(val) if val.isdigit() else 0
+                    elif 'Total uncorrected errors' in line:
+                        val = line.split('=')[-1].strip()
+                        diagnostics['write_uncorrected'] = int(val) if val.isdigit() else 0
+            
+            # Read errors
+            read_result = subprocess.run(['sg_logs', '-p', '0x3', self.device_path], 
+                                       capture_output=True, text=True, timeout=5)
+            if read_result.returncode == 0:
+                for line in read_result.stdout.split('\n'):
+                    if 'Total errors corrected' in line:
+                        val = line.split('=')[-1].strip()
+                        diagnostics['read_errors_corrected'] = int(val) if val.isdigit() else 0
+                    elif 'Total bytes processed' in line:
+                        val = line.split('=')[-1].strip()
+                        diagnostics['read_bytes'] = int(val) if val.isdigit() else 0
+                    elif 'Total uncorrected errors' in line:
+                        val = line.split('=')[-1].strip()
+                        diagnostics['read_uncorrected'] = int(val) if val.isdigit() else 0
+            
+            # Volume statistics
+            vol_result = subprocess.run(['sg_logs', '-p', '0x17', self.device_path], 
+                                      capture_output=True, text=True, timeout=5)
+            if vol_result.returncode == 0:
+                for line in vol_result.stdout.split('\n'):
+                    if 'Total data sets written' in line:
+                        val = line.split(':')[-1].strip()
+                        diagnostics['data_sets_written'] = int(val) if val.isdigit() else 0
+                    elif 'Total write retries' in line:
+                        val = line.split(':')[-1].strip()
+                        diagnostics['total_write_retries'] = int(val) if val.isdigit() else 0
+                    elif 'Last mount megabytes written' in line:
+                        val = line.split(':')[-1].strip()
+                        diagnostics['last_mount_mb_written'] = int(val) if val.isdigit() else 0
+                    elif 'Lifetime megabytes written' in line:
+                        val = line.split(':')[-1].strip()
+                        diagnostics['lifetime_mb_written'] = int(val) if val.isdigit() else 0
+        except Exception as e:
+            diagnostics['error'] = str(e)
+        
+        return diagnostics
+    
+    def format_bytes(self, bytes_val):
+        """Format bytes into human readable format."""
+        for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
+            if bytes_val < 1024.0:
+                return f"{bytes_val:.2f} {unit}"
+            bytes_val /= 1024.0
+        return f"{bytes_val:.2f} PB"
+    
+    def format_diagnostics(self, diag):
+        """Format diagnostics dictionary into readable string."""
+        lines = []
+        if 'block_size' in diag:
+            lines.append(f"  Block size: {diag['block_size']}")
+        if 'position' in diag:
+            lines.append(f"  Position: {diag['position']}")
+        
+        # Write statistics
+        if 'write_bytes' in diag:
+            lines.append(f"\n  WRITE Statistics:")
+            lines.append(f"    Bytes processed: {self.format_bytes(diag['write_bytes'])}")
+            lines.append(f"    Errors corrected: {diag.get('write_errors_corrected', 0)}")
+            lines.append(f"    Uncorrected errors: {diag.get('write_uncorrected', 0)}")
+            lines.append(f"    Write retries: {diag.get('write_retries', 0)}")
+        
+        # Read statistics  
+        if 'read_bytes' in diag:
+            lines.append(f"\n  READ Statistics:")
+            lines.append(f"    Bytes processed: {self.format_bytes(diag['read_bytes'])}")
+            lines.append(f"    Errors corrected: {diag.get('read_errors_corrected', 0)}")
+            lines.append(f"    Uncorrected errors: {diag.get('read_uncorrected', 0)}")
+        
+        # Volume statistics
+        if 'last_mount_mb_written' in diag:
+            lines.append(f"\n  VOLUME Statistics:")
+            lines.append(f"    Last mount written: {diag['last_mount_mb_written']:,} MB")
+            lines.append(f"    Lifetime written: {diag.get('lifetime_mb_written', 0):,} MB")
+            lines.append(f"    Data sets written: {diag.get('data_sets_written', 0):,}")
+            lines.append(f"    Total write retries: {diag.get('total_write_retries', 0):,}")
+        
+        if 'error' in diag:
+            lines.append(f"\n  Error getting diagnostics: {diag['error']}")
+        
+        return '\n'.join(lines) if lines else "  No diagnostics available"
+    
     def cleanup_temp_files(self):
         """
         Cleans up temporary tar files that were generated during the backup process.
