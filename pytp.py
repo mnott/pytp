@@ -427,6 +427,7 @@ def init(
 @app.command()
 def status(
     drive_name: str = typer.Option(os.environ.get('PYTP_DEV', 'lto9'), "--drive", "-d", help="Name of the tape drive"),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Show verbose output including actual commands executed"),
 ) -> None:
     """
     Shows the current status of the tape drive.
@@ -440,8 +441,9 @@ def status(
         drive_name (str): The name of the tape drive to be initialized. This name is used
                           to fetch the drive's configuration details. The default value is taken
                           from the environment variable 'PYTP_DEV' or defaults to 'lto9'.
+        verbose (bool): If True, shows the actual commands being executed.
     """
-    result = TapeOperations(drive_name).show_tape_status()
+    result = TapeOperations(drive_name).show_tape_status(verbose=verbose)
     typer.echo(result)
 
 # Alias for the status command

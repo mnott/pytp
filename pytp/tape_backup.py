@@ -493,6 +493,9 @@ class TapeBackup:
         timestamp_str = overall_start_time.strftime("%Y%m%d_%H%M%S")
         backup_log_path = os.path.join(self.tar_dir, f"direct_backup_{timestamp_str}.log")
         
+        # Track job statistics for summary table
+        job_stats = []
+        
         # Get initial tape diagnostics
         initial_diagnostics = self.get_tape_diagnostics()
         
@@ -547,6 +550,7 @@ class TapeBackup:
             process = subprocess.Popen(backup_command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             mbuffer_summary = None
             captured_output = []
+            error_messages = []
             file_count = 0
             
             # Open a separate file list log for this directory with timestamp
@@ -560,6 +564,10 @@ class TapeBackup:
                     for line in process.stderr:
                         # Capture all output for logging
                         captured_output.append(line)
+                        
+                        # Detect and capture error messages
+                        if any(err_word in line.lower() for err_word in ['error', 'warning', 'failed', 'cannot', 'permission denied']):
+                            error_messages.append(line.strip())
                         
                         # Log files being backed up (tar verbose output shows files)
                         if line.startswith('./') or (line.startswith('/') and not line.startswith('in @')):
@@ -589,23 +597,77 @@ class TapeBackup:
                     file_list_log.write(f"Total files: {file_count}\n")
                     file_list_log.write(f"Duration: {dir_duration}\n")
                     
-                    # Log results for this directory
+                    # Get tape diagnostics for this backup to calculate data volume
+                    dir_end_diagnostics = self.get_tape_diagnostics()
+                    
+                    # Calculate data written for this directory
+                    data_written_bytes = 0
+                    if 'write_bytes' in dir_end_diagnostics and 'write_bytes' in initial_diagnostics:
+                        data_written_bytes = dir_end_diagnostics['write_bytes'] - initial_diagnostics.get('write_bytes', 0)
+                    
+                    # Calculate throughput
+                    duration_seconds = dir_duration.total_seconds()
+                    duration_hours = duration_seconds / 3600.0
+                    
+                    # Store stats for summary table
+                    job_stat = {
+                        'directory': directory,
+                        'files': file_count,
+                        'data_bytes': data_written_bytes,
+                        'duration': dir_duration,
+                        'duration_seconds': duration_seconds,
+                        'duration_hours': duration_hours,
+                        'return_code': process.returncode,
+                        'mbuffer_summary': mbuffer_summary,
+                        'error_messages': error_messages,
+                        'status': 'SUCCESS' if process.returncode == 0 and mbuffer_summary else 'FAILED'
+                    }
+                    job_stats.append(job_stat)
+                    
+                    # Log results for this directory with comprehensive metrics
                     with open(backup_log_path, 'a') as log_file:
                         log_file.write(f"Backup of {directory} completed at {dir_end_time.strftime('%Y-%m-%d %H:%M:%S')}\n")
-                        log_file.write(f"Duration: {dir_duration}\n")
-                        log_file.write(f"Files backed up: {file_count}\n")
+                        log_file.write(f"Duration: {dir_duration} ({duration_seconds:.0f} seconds)\n")
+                        log_file.write(f"Files backed up: {file_count:,}\n")
+                        log_file.write(f"Data written: {self.format_bytes(data_written_bytes)}\n")
+                        log_file.write(f"Average throughput: {self.format_bytes(data_written_bytes/duration_seconds) + '/s' if duration_seconds > 0 else '0 B/s'}\n")
+                        log_file.write(f"Volume per hour: {self.format_bytes(data_written_bytes/duration_hours) + '/hr' if duration_hours > 0 else '0 B/hr'}\n")
+                        files_per_hour = file_count/duration_hours if duration_hours > 0 else 0
+                        log_file.write(f"Files per hour: {files_per_hour:.0f}/hr\n")
                         log_file.write(f"File list log: {file_list_path}\n")
                         log_file.write(f"Return code: {process.returncode}\n")
                         if mbuffer_summary:
                             log_file.write(f"MBuffer stats: {mbuffer_summary}\n")
+                        else:
+                            log_file.write(f"WARNING: No mbuffer summary captured - process may have terminated abnormally\n")
+                        if error_messages:
+                            log_file.write(f"Errors/Warnings detected:\n")
+                            for error_msg in error_messages:
+                                log_file.write(f"  {error_msg}\n")
                         if process.returncode != 0:
                             log_file.write(f"ERROR: Backup failed with code {process.returncode}\n")
                             # Log last 10 lines of output for debugging
                             log_file.write("Last output lines:\n")
                             for output_line in captured_output[-10:]:
                                 log_file.write(f"  {output_line}")
+                        
+                        # Update initial_diagnostics for next iteration
+                        initial_diagnostics = dir_end_diagnostics
+                        
                         log_file.write(f"--- End of {directory} backup ---\n\n")
                         log_file.flush()
+                    
+                    # Also print comprehensive summary to console
+                    print(f"\n📊 BACKUP SUMMARY for {directory}:")
+                    print(f"   Files: {file_count:,}")
+                    print(f"   Data: {self.format_bytes(data_written_bytes)}")
+                    print(f"   Duration: {dir_duration}")
+                    print(f"   Throughput: {self.format_bytes(data_written_bytes/duration_seconds) + '/s' if duration_seconds > 0 else '0 B/s'}")
+                    print(f"   Volume/hr: {self.format_bytes(data_written_bytes/duration_hours) + '/hr' if duration_hours > 0 else '0 B/hr'}")
+                    files_per_hour = file_count/duration_hours if duration_hours > 0 else 0
+                    print(f"   Files/hr: {files_per_hour:.0f}")
+                    if not mbuffer_summary:
+                        print(f"   ⚠️  WARNING: No mbuffer summary - check for errors!")
                 
                     if process.returncode != 0:
                         typer.echo(f"Error occurred during backup of {directory}. Error code: {process.returncode}")
@@ -624,13 +686,57 @@ class TapeBackup:
         # Get final tape diagnostics
         final_diagnostics = self.get_tape_diagnostics()
         
-        # Write session summary
+        # Calculate totals for summary
+        total_files = sum(job['files'] for job in job_stats)
+        total_data_bytes = sum(job['data_bytes'] for job in job_stats)
+        total_duration_seconds = sum(job['duration_seconds'] for job in job_stats)
+        total_duration_hours = total_duration_seconds / 3600.0
+        
+        # Write session summary with tabular format
         overall_end_time = datetime.datetime.now()
         overall_duration = overall_end_time - overall_start_time
+        overall_duration_hours = overall_duration.total_seconds() / 3600.0
         with open(backup_log_path, 'a') as log_file:
             log_file.write(f"\n{'='*80}\n")
             log_file.write(f"Direct Backup Session Completed: {overall_end_time.strftime('%Y-%m-%d %H:%M:%S')}\n")
             log_file.write(f"Total Duration: {overall_duration}\n")
+            
+            # TABULAR SUMMARY
+            log_file.write(f"\n{'='*120}\n")
+            log_file.write(f"JOB PERFORMANCE SUMMARY\n")
+            log_file.write(f"{'='*120}\n")
+            
+            # Table header
+            log_file.write(f"{'DIRECTORY':<30} {'STATUS':<8} {'FILES':<10} {'DATA':<12} {'DURATION':<12} {'MB/s':<8} {'GB/hr':<8} {'FILES/hr':<10} {'ERRORS':<8}\n")
+            log_file.write(f"{'-'*120}\n")
+            
+            # Individual job rows
+            for job in job_stats:
+                dir_short = job['directory'].split('/')[-1] or job['directory']
+                throughput_mbs = job['data_bytes'] / (1024*1024) / job['duration_seconds'] if job['duration_seconds'] > 0 else 0
+                volume_gbh = job['data_bytes'] / (1024*1024*1024) / job['duration_hours'] if job['duration_hours'] > 0 else 0
+                files_ph = job['files'] / job['duration_hours'] if job['duration_hours'] > 0 else 0
+                error_count = len(job['error_messages'])
+                
+                log_file.write(f"{dir_short:<30} {job['status']:<8} {job['files']:<10,} "
+                              f"{self.format_bytes(job['data_bytes']):<12} "
+                              f"{str(job['duration']).split('.')[0]:<12} "
+                              f"{throughput_mbs:<8.1f} {volume_gbh:<8.1f} {files_ph:<10.0f} {error_count:<8}\n")
+            
+            # Totals row
+            log_file.write(f"{'-'*120}\n")
+            total_throughput_mbs = total_data_bytes / (1024*1024) / overall_duration.total_seconds() if overall_duration.total_seconds() > 0 else 0
+            total_volume_gbh = total_data_bytes / (1024*1024*1024) / overall_duration_hours if overall_duration_hours > 0 else 0
+            total_files_ph = total_files / overall_duration_hours if overall_duration_hours > 0 else 0
+            total_errors = sum(len(job['error_messages']) for job in job_stats)
+            failed_jobs = sum(1 for job in job_stats if job['status'] == 'FAILED')
+            
+            log_file.write(f"{'TOTAL':<30} {f'{len(job_stats)-failed_jobs}/{len(job_stats)} OK':<8} {total_files:<10,} "
+                          f"{self.format_bytes(total_data_bytes):<12} "
+                          f"{str(overall_duration).split('.')[0]:<12} "
+                          f"{total_throughput_mbs:<8.1f} {total_volume_gbh:<8.1f} {total_files_ph:<10.0f} {total_errors:<8}\n")
+            log_file.write(f"{'='*120}\n")
+            
             log_file.write(f"\n--- TAPE DIAGNOSTICS (AFTER) ---\n")
             log_file.write(self.format_diagnostics(final_diagnostics))
             
@@ -656,6 +762,32 @@ class TapeBackup:
             log_file.write(f"\nLog file: {backup_log_path}\n")
             log_file.write(f"{'='*80}\n")
             log_file.flush()
+        
+        # Print tabular summary to console
+        print(f"\n{'='*120}")
+        print(f"📊 BACKUP SESSION SUMMARY")
+        print(f"{'='*120}")
+        print(f"{'DIRECTORY':<30} {'STATUS':<8} {'FILES':<10} {'DATA':<12} {'DURATION':<12} {'MB/s':<8} {'GB/hr':<8} {'FILES/hr':<10} {'ERRORS':<8}")
+        print(f"{'-'*120}")
+        
+        for job in job_stats:
+            dir_short = job['directory'].split('/')[-1] or job['directory']
+            throughput_mbs = job['data_bytes'] / (1024*1024) / job['duration_seconds'] if job['duration_seconds'] > 0 else 0
+            volume_gbh = job['data_bytes'] / (1024*1024*1024) / job['duration_hours'] if job['duration_hours'] > 0 else 0
+            files_ph = job['files'] / job['duration_hours'] if job['duration_hours'] > 0 else 0
+            error_count = len(job['error_messages'])
+            
+            print(f"{dir_short:<30} {job['status']:<8} {job['files']:<10,} "
+                  f"{self.format_bytes(job['data_bytes']):<12} "
+                  f"{str(job['duration']).split('.')[0]:<12} "
+                  f"{throughput_mbs:<8.1f} {volume_gbh:<8.1f} {files_ph:<10.0f} {error_count:<8}")
+        
+        print(f"{'-'*120}")
+        print(f"{'TOTAL':<30} {f'{len(job_stats)-failed_jobs}/{len(job_stats)} OK':<8} {total_files:<10,} "
+              f"{self.format_bytes(total_data_bytes):<12} "
+              f"{str(overall_duration).split('.')[0]:<12} "
+              f"{total_throughput_mbs:<8.1f} {total_volume_gbh:<8.1f} {total_files_ph:<10.0f} {total_errors:<8}")
+        print(f"{'='*120}")
         
         typer.echo(f"\n📊 Backup log saved to: {backup_log_path}")
         return "All backups completed."
@@ -719,18 +851,33 @@ class TapeBackup:
                                       capture_output=True, text=True, timeout=5)
             if vol_result.returncode == 0:
                 for line in vol_result.stdout.split('\n'):
-                    if 'Total data sets written' in line:
+                    if 'Total data sets written:' in line:
                         val = line.split(':')[-1].strip()
                         diagnostics['data_sets_written'] = int(val) if val.isdigit() else 0
-                    elif 'Total write retries' in line:
+                    elif 'Total write retries:' in line:
                         val = line.split(':')[-1].strip()
                         diagnostics['total_write_retries'] = int(val) if val.isdigit() else 0
-                    elif 'Last mount megabytes written' in line:
+                    elif 'Total data sets read:' in line:
+                        val = line.split(':')[-1].strip()
+                        diagnostics['data_sets_read'] = int(val) if val.isdigit() else 0
+                    elif 'Total read retries:' in line:
+                        val = line.split(':')[-1].strip()
+                        diagnostics['total_read_retries'] = int(val) if val.isdigit() else 0
+                    elif 'Last mount megabytes written:' in line:
                         val = line.split(':')[-1].strip()
                         diagnostics['last_mount_mb_written'] = int(val) if val.isdigit() else 0
-                    elif 'Lifetime megabytes written' in line:
+                    elif 'Last mount megabytes read:' in line:
+                        val = line.split(':')[-1].strip()
+                        diagnostics['last_mount_mb_read'] = int(val) if val.isdigit() else 0
+                    elif 'Lifetime megabytes written:' in line:
                         val = line.split(':')[-1].strip()
                         diagnostics['lifetime_mb_written'] = int(val) if val.isdigit() else 0
+                    elif 'Lifetime megabytes read:' in line:
+                        val = line.split(':')[-1].strip()
+                        diagnostics['lifetime_mb_read'] = int(val) if val.isdigit() else 0
+                    elif 'Last load write compression ratio:' in line:
+                        val = line.split(':')[-1].strip()
+                        diagnostics['compression_ratio'] = int(val) if val.isdigit() else 0
         except Exception as e:
             diagnostics['error'] = str(e)
         
@@ -768,12 +915,31 @@ class TapeBackup:
             lines.append(f"    Uncorrected errors: {diag.get('read_uncorrected', 0)}")
         
         # Volume statistics
-        if 'last_mount_mb_written' in diag:
+        if 'data_sets_written' in diag or 'last_mount_mb_written' in diag:
             lines.append(f"\n  VOLUME Statistics:")
-            lines.append(f"    Last mount written: {diag['last_mount_mb_written']:,} MB")
-            lines.append(f"    Lifetime written: {diag.get('lifetime_mb_written', 0):,} MB")
-            lines.append(f"    Data sets written: {diag.get('data_sets_written', 0):,}")
-            lines.append(f"    Total write retries: {diag.get('total_write_retries', 0):,}")
+            if 'data_sets_written' in diag:
+                lines.append(f"    Total data sets written: {diag['data_sets_written']:,}")
+            if 'total_write_retries' in diag:
+                lines.append(f"    Total write retries: {diag['total_write_retries']:,}")
+            if 'data_sets_read' in diag:
+                lines.append(f"    Total data sets read: {diag['data_sets_read']:,}")
+            if 'total_read_retries' in diag:
+                lines.append(f"    Total read retries: {diag['total_read_retries']:,}")
+            if 'last_mount_mb_written' in diag:
+                mb = diag['last_mount_mb_written']
+                lines.append(f"    Last mount written: {self.format_bytes(mb * 1024 * 1024)}")
+            if 'last_mount_mb_read' in diag:
+                mb = diag['last_mount_mb_read']
+                lines.append(f"    Last mount read: {self.format_bytes(mb * 1024 * 1024)}")
+            if 'lifetime_mb_written' in diag:
+                mb = diag['lifetime_mb_written']
+                lines.append(f"    Lifetime written: {self.format_bytes(mb * 1024 * 1024)}")
+            if 'lifetime_mb_read' in diag:
+                mb = diag['lifetime_mb_read']
+                lines.append(f"    Lifetime read: {self.format_bytes(mb * 1024 * 1024)}")
+            if 'compression_ratio' in diag and diag['compression_ratio'] > 0:
+                ratio = diag['compression_ratio'] / 100.0
+                lines.append(f"    Compression ratio: {ratio:.1f}:1")
         
         if 'error' in diag:
             lines.append(f"\n  Error getting diagnostics: {diag['error']}")

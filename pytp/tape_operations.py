@@ -139,7 +139,7 @@ class TapeOperations:
         return False  # Default to not ready if none of the conditions match
 
 
-    def show_tape_status(self):
+    def show_tape_status(self, verbose: bool = False):
         """
         Retrieves and returns the current status and position of the tape in the tape drive.
 
@@ -148,6 +148,9 @@ class TapeOperations:
         such as whether it's online or any errors have been encountered. The 'mt tell' 
         command returns the current position of the tape in terms of the number of blocks 
         from the beginning.
+
+        Args:
+            verbose (bool): If True, shows the actual commands being executed.
 
         Returns:
             str: A string containing the combined output of the 'mt status' and 'mt tell' commands,
@@ -162,7 +165,14 @@ class TapeOperations:
         tape drive's make and model. It's recommended to familiarize yourself with your specific 
         tape drive's documentation for a better understanding of the status messages.
         """
+        if verbose:
+            status_command = ["mt", "-f", self.device_path, "status"]
+            typer.echo(f"Executing command: {' '.join(status_command)}")
+        
         status_output  = self.run_command(["status"])
+        
+        if verbose:
+            typer.echo(f"Raw status output:\n{status_output}")
 
         if "DR_OPEN" in status_output:
             return "The tape drive is empty (no tape loaded)."
@@ -171,15 +181,168 @@ class TapeOperations:
         elif "Device or resource busy" in status_output:
             return "The tape drive is busy"
 
-        block_position = self.run_command(["tell"])
-        status_output += block_position
-        match = re.search(r"At block (\d+).", block_position)
-        if match:
-            block_number = match.group(1)
-            capacity_used = round(int(block_number) * int(self.block_size) / 1024**3)
-            status_output += f"Capacity used: {capacity_used} GB"
+        # Extract position and block size info from status output
+        file_match = re.search(r"File number=(-?\d+)", status_output)
+        block_match = re.search(r"block number=(-?\d+)", status_output)
+        blocksize_match = re.search(r"Tape block size (\d+) bytes", status_output)
+        
+        # Add volume statistics if available with Rich table
+        try:
+            import subprocess
+            from rich.table import Table
+            from rich.console import Console
+            from io import StringIO
+            
+            vol_result = subprocess.run(['sg_logs', '-p', '0x17', self.device_path], 
+                                      capture_output=True, text=True, timeout=5)
+            if vol_result.returncode == 0 and vol_result.stdout:
+                # Parse ALL statistics including page info
+                stats = {}
+                device_info = ""
+                for line in vol_result.stdout.split('\n'):
+                    if line.strip():
+                        if 'Ultrium' in line:
+                            device_info = line.strip()
+                        elif ':' in line:
+                            key = line.split(':')[0].strip()
+                            val = line.split(':')[-1].strip()
+                            if val.isdigit():
+                                stats[key] = int(val)
+                            else:
+                                stats[key] = val
+                
+                if stats:
+                    # Create Rich table without show_lines
+                    table = Table(title=f"\n═══ VOLUME STATISTICS ═══\n{device_info}", 
+                                  title_style="bold cyan",
+                                  show_header=True, 
+                                  header_style="bold yellow",
+                                  border_style="blue",
+                                  show_lines=False,  # No lines between every row
+                                  expand=False)
+                    
+                    table.add_column("Category", style="cyan", width=30)
+                    table.add_column("Metric", style="white", width=35)
+                    table.add_column("Value", justify="right", style="green", width=20)
+                    
+                    # Page Information
+                    if 'Page valid' in stats:
+                        table.add_row("Page Information", "Page valid", str(stats['Page valid']))
+                    if 'Thread count' in stats:
+                        table.add_row("", "Thread count", f"{stats['Thread count']:,}")
+                    
+                    # Add section break
+                    table.add_section()
+                    
+                    # Write Operations
+                    if 'Total data sets written' in stats:
+                        table.add_row("Write Operations", "Total data sets written", f"{stats['Total data sets written']:,}")
+                    if 'Total write retries' in stats:
+                        table.add_row("", "Total write retries", f"{stats['Total write retries']:,}")
+                    if 'Total unrecovered write errors' in stats:
+                        table.add_row("", "Total unrecovered write errors", f"{stats['Total unrecovered write errors']:,}")
+                    if 'Total suspended writes' in stats:
+                        table.add_row("", "Total suspended writes", f"{stats['Total suspended writes']:,}")
+                    if 'Total fatal suspended writes' in stats:
+                        table.add_row("", "Total fatal suspended writes", f"{stats['Total fatal suspended writes']:,}")
+                    
+                    # Add section break
+                    table.add_section()
+                    
+                    # Read Operations
+                    if 'Total data sets read' in stats:
+                        table.add_row("Read Operations", "Total data sets read", f"{stats['Total data sets read']:,}")
+                    if 'Total read retries' in stats:
+                        table.add_row("", "Total read retries", f"{stats['Total read retries']:,}")
+                    if 'Total unrecovered read errors' in stats:
+                        table.add_row("", "Total unrecovered read errors", f"{stats['Total unrecovered read errors']:,}")
+                    
+                    # Add section break
+                    table.add_section()
+                    
+                    # Last Mount Statistics
+                    if 'Last mount unrecovered write errors' in stats:
+                        table.add_row("Last Mount", "Unrecovered write errors", f"{stats['Last mount unrecovered write errors']:,}")
+                    if 'Last mount unrecovered read errors' in stats:
+                        table.add_row("", "Unrecovered read errors", f"{stats['Last mount unrecovered read errors']:,}")
+                    if 'Last mount megabytes written' in stats:
+                        mb = stats['Last mount megabytes written']
+                        formatted = self.format_bytes(mb * 1024 * 1024)
+                        table.add_row("", "Data written", formatted)
+                        table.add_row("", "Data written (raw)", f"{mb:,} MB")
+                    if 'Last mount megabytes read' in stats:
+                        mb = stats['Last mount megabytes read']
+                        formatted = self.format_bytes(mb * 1024 * 1024)
+                        table.add_row("", "Data read", formatted)
+                        table.add_row("", "Data read (raw)", f"{mb:,} MB")
+                    
+                    # Add section break
+                    table.add_section()
+                    
+                    # Lifetime Statistics
+                    if 'Lifetime megabytes written' in stats:
+                        mb = stats['Lifetime megabytes written']
+                        formatted = self.format_bytes(mb * 1024 * 1024)
+                        table.add_row("Lifetime", "Total data written", formatted)
+                        table.add_row("", "Total data written (raw)", f"{mb:,} MB")
+                    if 'Lifetime megabytes read' in stats:
+                        mb = stats['Lifetime megabytes read']
+                        formatted = self.format_bytes(mb * 1024 * 1024)
+                        table.add_row("", "Total data read", formatted)
+                        table.add_row("", "Total data read (raw)", f"{mb:,} MB")
+                    
+                    # Add section break
+                    table.add_section()
+                    
+                    # Compression
+                    if 'Last load write compression ratio' in stats:
+                        ratio = stats['Last load write compression ratio'] / 100.0 if isinstance(stats['Last load write compression ratio'], int) else 0
+                        table.add_row("Compression", "Last load write compression ratio", f"{ratio:.2f}:1")
+                    if 'Last load read compression ratio' in stats:
+                        ratio = stats['Last load read compression ratio'] / 100.0 if isinstance(stats['Last load read compression ratio'], int) else 0
+                        table.add_row("", "Last load read compression ratio", f"{ratio:.2f}:1")
+                    
+                    # Add section break
+                    table.add_section()
+                    
+                    # Add current position info to table
+                    if file_match and block_match:
+                        file_number = file_match.group(1)
+                        block_number = block_match.group(1)
+                        table.add_row("Current Position", "File number", file_number)
+                        table.add_row("", "Block number", block_number)
+                        if blocksize_match:
+                            blocksize = blocksize_match.group(1)
+                            if blocksize == "0":
+                                table.add_row("", "Block size", "Variable (0)")
+                            else:
+                                table.add_row("", "Block size", f"{int(blocksize):,} bytes")
+                        if "EOF" in status_output and block_number == "0" and int(file_number) > 0:
+                            table.add_row("", "Status", f"EOF (end of archive {file_number})")
+                        elif file_number == "0" and block_number == "0":
+                            table.add_row("", "Status", "Beginning of tape (BOT)")
+                    
+                    # Render table to string
+                    string_io = StringIO()
+                    console = Console(file=string_io, force_terminal=True, width=100)
+                    console.print(table)
+                    # Replace the raw status output with the table
+                    status_output = string_io.getvalue()
+        except Exception as e:
+            if verbose:
+                typer.echo(f"Could not get volume statistics: {e}")
 
         return status_output
+    
+    def format_bytes(self, bytes_value):
+        """Format bytes into human-readable format."""
+        for unit in ['B', 'KB', 'MB', 'GB', 'TB', 'PB']:
+            if bytes_value < 1024.0:
+                if unit == 'B':
+                    return f"{bytes_value:.0f} {unit}"
+                return f"{bytes_value:.2f} {unit}"
+            bytes_value /= 1024.0
+        return f"{bytes_value:.2f} PB"
 
 
     def show_tape_position(self):
@@ -514,6 +677,14 @@ class TapeOperations:
         # Check if the drive is ready
         if not self.is_tape_ready():
             return "The tape drive is not ready."
+        
+        # Initialize tape drive block size for optimal performance
+        # This ensures the drive is in fixed block mode matching our configured block size
+        init_result = self.init()
+        if "Error" in str(init_result):
+            typer.echo(f"Warning: Could not set block size: {init_result}")
+        else:
+            typer.echo(f"Tape initialized with block size: {self.block_size} bytes")
 
         tape_backup = TapeBackup(self, self.device_path, self.block_size, self.tar_dir, self.snapshot_dir, library_name, label, job, strategy, incremental, max_concurrent_tars, memory_buffer, memory_buffer_percent, use_double_buffer, low_water_mark)
 

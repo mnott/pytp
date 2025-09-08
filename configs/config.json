@@ -16,12 +16,12 @@
     "tape_libraries": [
         {
             "name": "msl2024",
-            "device_path": "/dev/sch0",
+            "device_path": "/dev/sg10",
             "slots": 23,
             "drives": [
                 "lto6",
                 "lto9"
             ]
-        }        
+        }
     ]
 }
