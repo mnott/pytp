@@ -528,14 +528,7 @@ class TapeOperations:
         if not self.is_tape_ready():
             return "The tape drive is not ready."
 
-        # Rewind the tape first
-        rewind_result = self.rewind_tape()
-        if "Error" in rewind_result:
-            return rewind_result  # Return error message if rewind fails
-
-        typer.echo(f"Initializing tape drive {self.device_path} with block size {self.block_size}...")
-
-        # Set the block size
+        # Set the block size (no rewind needed - just configure the drive)
         return self.run_command(["setblk", str(self.block_size)])
 
 

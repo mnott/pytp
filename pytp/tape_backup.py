@@ -561,7 +561,35 @@ class TapeBackup:
                 file_list_log.write(f"{'='*80}\n")
                 
                 try:
-                    for line in process.stderr:
+                    import threading
+                    import queue
+                    
+                    # Use threads to read both stdout and stderr simultaneously
+                    output_queue = queue.Queue()
+                    
+                    def read_output(stream, name):
+                        for line in stream:
+                            output_queue.put((name, line))
+                        output_queue.put((name, None))  # Signal end of stream
+                    
+                    # Start threads to read both streams
+                    stderr_thread = threading.Thread(target=read_output, args=(process.stderr, 'stderr'))
+                    stdout_thread = threading.Thread(target=read_output, args=(process.stdout, 'stdout'))
+                    stderr_thread.start()
+                    stdout_thread.start()
+                    
+                    # Process output from both streams
+                    streams_ended = 0
+                    while streams_ended < 2:
+                        try:
+                            stream_name, line = output_queue.get(timeout=0.1)
+                            if line is None:
+                                streams_ended += 1
+                                continue
+                        except queue.Empty:
+                            continue
+                            
+                        # Process the line regardless of which stream it came from
                         # Capture all output for logging
                         captured_output.append(line)
                         
@@ -583,9 +611,28 @@ class TapeBackup:
                         else:
                             print(line, end='')  # Print other lines unchanged
                         
-                        # Capture mbuffer summary line
+                        # Capture mbuffer summary line and extract data
                         if line.startswith('summary:'):
                             mbuffer_summary = line.strip()
+                            # Parse mbuffer summary: "summary: 2251 GiByte in 2h 53min 19.2sec - average of 222 MiB/s"
+                            try:
+                                import re
+                                # Extract data size in bytes
+                                size_match = re.search(r'(\d+(?:\.\d+)?)\s*([KMGT]?i?B)yte', line)
+                                if size_match:
+                                    size_value = float(size_match.group(1))
+                                    size_unit = size_match.group(2)
+                                    # Convert to bytes
+                                    multipliers = {'Byte': 1, 'KiByte': 1024, 'MiByte': 1024**2, 
+                                                  'GiByte': 1024**3, 'TiByte': 1024**4,
+                                                  'KByte': 1000, 'MByte': 1000**2, 'GByte': 1000**3, 'TByte': 1000**4}
+                                    if size_unit in multipliers:
+                                        actual_data_bytes = int(size_value * multipliers[size_unit])
+                                        # Use mbuffer's data size instead of tar file counting
+                                        data_written_bytes = actual_data_bytes
+                            except Exception as e:
+                                # If parsing fails, stick with original calculation
+                                pass
                 
                     process.wait()
                     dir_end_time = datetime.datetime.now()
@@ -620,7 +667,7 @@ class TapeBackup:
                         'return_code': process.returncode,
                         'mbuffer_summary': mbuffer_summary,
                         'error_messages': error_messages,
-                        'status': 'SUCCESS' if process.returncode == 0 and mbuffer_summary else 'FAILED'
+                        'status': 'SUCCESS' if process.returncode == 0 else 'FAILED'
                     }
                     job_stats.append(job_stat)
                     
