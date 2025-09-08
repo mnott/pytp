@@ -593,8 +593,11 @@ class TapeBackup:
                         # Capture all output for logging
                         captured_output.append(line)
                         
-                        # Detect and capture error messages
-                        if any(err_word in line.lower() for err_word in ['error', 'warning', 'failed', 'cannot', 'permission denied']):
+                        # Detect and capture actual error messages (not filenames containing error words)
+                        # Only flag lines that start with tar: or contain actual error indicators
+                        if (line.startswith('tar:') and any(err_word in line.lower() for err_word in ['error', 'warning', 'failed', 'cannot', 'permission denied'])) or \
+                           ('permission denied' in line.lower()) or \
+                           (line.startswith('./') == False and line.startswith('/') == False and any(err_word in line.lower() for err_word in ['error', 'failed', 'cannot access'])):
                             error_messages.append(line.strip())
                         
                         # Log files being backed up (tar verbose output shows files)

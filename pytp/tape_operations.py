@@ -179,7 +179,9 @@ class TapeOperations:
         elif "DRIVE NOT READY" in status_output or "ERROR" in status_output:
             return "The tape drive is not ready or has encountered an error"
         elif "Device or resource busy" in status_output:
-            return "The tape drive is busy"
+            # When busy, provide detailed information about what's happening
+            busy_info = self.get_busy_operation_details()
+            return f"The tape drive is busy\n{busy_info}"
 
         # Extract position and block size info from status output
         file_match = re.search(r"File number=(-?\d+)", status_output)
@@ -344,6 +346,107 @@ class TapeOperations:
             bytes_value /= 1024.0
         return f"{bytes_value:.2f} PB"
 
+    def get_busy_operation_details(self):
+        """Get detailed information about what operation is making the tape drive busy."""
+        import subprocess
+        import re
+        from rich.table import Table
+        from rich.console import Console
+        from io import StringIO
+        
+        try:
+            # Check what processes are using the tape device
+            lsof_result = subprocess.run(['lsof', self.device_path], 
+                                       capture_output=True, text=True, timeout=5)
+            
+            if lsof_result.returncode != 0:
+                return "📼 Status: BUSY (unable to determine specific operation)"
+            
+            # Parse lsof output to get process info
+            processes = []
+            for line in lsof_result.stdout.strip().split('\n')[1:]:  # Skip header
+                if line.strip():
+                    parts = line.split()
+                    if len(parts) >= 4:
+                        cmd = parts[0]
+                        pid = parts[1]
+                        user = parts[2]
+                        fd_mode = parts[3]
+                        processes.append({'cmd': cmd, 'pid': pid, 'user': user, 'mode': fd_mode})
+            
+            if not processes:
+                return "📼 Status: BUSY (no process information available)"
+            
+            # Get detailed command line for the main process
+            main_process = processes[0]
+            try:
+                ps_result = subprocess.run(['ps', '-p', main_process['pid'], '-o', 'args', '--no-headers'], 
+                                         capture_output=True, text=True, timeout=2)
+                full_command = ps_result.stdout.strip() if ps_result.returncode == 0 else "Unknown command"
+            except:
+                full_command = f"{main_process['cmd']} (PID {main_process['pid']})"
+            
+            # Create a rich table for busy status
+            table = Table(title="📼 TAPE DRIVE STATUS: BUSY", 
+                         title_style="bold red",
+                         show_header=True, 
+                         header_style="bold yellow",
+                         border_style="red",
+                         show_lines=False,
+                         expand=False)
+            
+            table.add_column("Operation", style="cyan", width=20)
+            table.add_column("Details", style="white", width=60)
+            
+            # Determine operation type from command
+            operation_type = "Unknown Operation"
+            operation_details = full_command
+            
+            if 'mbuffer' in main_process['cmd'].lower():
+                if 'r' in main_process['mode']:
+                    operation_type = "🔄 Reading from tape"
+                    operation_details = "MBuffer is reading data from tape"
+                elif 'w' in main_process['mode']:
+                    operation_type = "💾 Writing to tape"  
+                    operation_details = "MBuffer is writing data to tape"
+                    
+                # Extract buffer size and other params from command
+                buffer_match = re.search(r'-m\s+(\d+[KMGT]?)', full_command)
+                if buffer_match:
+                    operation_details += f"\nBuffer: {buffer_match.group(1)}"
+                    
+            elif 'tar' in main_process['cmd'].lower():
+                operation_type = "📦 Tar Operation"
+                operation_details = "Tar is accessing the tape"
+                
+            elif 'dd' in main_process['cmd'].lower():
+                operation_type = "📝 Data Transfer"
+                operation_details = "DD is transferring data"
+                
+            elif 'mt' in main_process['cmd'].lower():
+                operation_type = "⚙️ Tape Control"
+                operation_details = "MT command is controlling tape"
+            
+            table.add_row("Current Operation", operation_type)
+            table.add_row("Process", f"{main_process['cmd']} (PID {main_process['pid']})")
+            table.add_row("User", main_process['user'])
+            table.add_row("Access Mode", main_process['mode'])
+            
+            if len(processes) > 1:
+                table.add_row("Additional Processes", f"{len(processes)-1} related processes")
+            
+            # Add command details if it's not too long
+            if len(operation_details) < 100:
+                table.add_row("Details", operation_details)
+            
+            # Render table to string
+            string_io = StringIO()
+            console = Console(file=string_io, force_terminal=True, width=90)
+            console.print(table)
+            return string_io.getvalue()
+            
+        except Exception as e:
+            return f"📼 Status: BUSY (error getting details: {e})"
 
     def show_tape_position(self):
         """
