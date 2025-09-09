@@ -412,6 +412,32 @@ class TapeBackup:
         The method assumes that each directory in the 'directories' list is a valid path and tha
         the tape device and block size have been correctly configured.
         """
+        # Create session log for tar/dd backups with timestamp and command
+        import datetime
+        import sys
+        session_start_time = datetime.datetime.now()
+        timestamp_str = session_start_time.strftime("%Y%m%d_%H%M%S")
+        strategy_name = "tar" if self.strategy == self.STRATEGY_TAR else "dd"
+        session_log_path = os.path.join(self.tar_dir, f"{strategy_name}_backup_{timestamp_str}.log")
+        pytp_command = ' '.join(sys.argv) if sys.argv else f'pytp backup --strategy {strategy_name} [unknown arguments]'
+        
+        with open(session_log_path, 'w') as log_file:
+            log_file.write(f"\n{'='*80}\n")
+            log_file.write(f"{strategy_name.upper()} Backup Session Started: {session_start_time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+            log_file.write(f"Command: {pytp_command}\n")
+            log_file.write(f"Device: {self.device_path}\n")
+            log_file.write(f"Strategy: {self.strategy}\n")
+            log_file.write(f"Job: {self.job if self.job else 'None'}\n")
+            log_file.write(f"Label: {self.label if self.label else 'None'}\n")
+            log_file.write(f"Incremental: {self.incremental}\n")
+            log_file.write(f"Buffer: {self.memory_buffer}\n")
+            log_file.write(f"Max concurrent tars: {self.max_concurrent_tars}\n")
+            log_file.write(f"Directories to backup: {directories}\n")
+            log_file.write(f"{'='*80}\n\n")
+            log_file.flush()
+        
+        typer.echo(f"Session log: {session_log_path}")
+        
         self.tars_to_be_generated = [(index, os.path.join(self.tar_dir, f"{os.path.basename(dir)}.tar")) for index, dir in enumerate(directories)]
 
         tar_threads = [threading.Thread(target=self.generate_tar_file, args=(directory, index)) for index, directory in enumerate(directories)]
@@ -499,10 +525,19 @@ class TapeBackup:
         # Get initial tape diagnostics
         initial_diagnostics = self.get_tape_diagnostics()
         
+        # Reconstruct the pytp command for logging
+        import sys
+        pytp_command = ' '.join(sys.argv) if sys.argv else 'pytp backup [unknown arguments]'
+        
         with open(backup_log_path, 'w') as log_file:
             log_file.write(f"\n{'='*80}\n")
             log_file.write(f"Direct Backup Session Started: {overall_start_time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+            log_file.write(f"Command: {pytp_command}\n")
             log_file.write(f"Device: {self.device_path}\n")
+            log_file.write(f"Strategy: {self.strategy}\n")
+            log_file.write(f"Job: {self.job if self.job else 'None'}\n")
+            log_file.write(f"Label: {self.label if self.label else 'None'}\n")
+            log_file.write(f"Incremental: {self.incremental}\n")
             log_file.write(f"Buffer: {self.memory_buffer}, High: {self.memory_buffer_percent}%, Low: {self.low_water_mark}%\n")
             log_file.write(f"Directories to backup: {directories}\n")
             log_file.write(f"\n--- TAPE DIAGNOSTICS (BEFORE) ---\n")
