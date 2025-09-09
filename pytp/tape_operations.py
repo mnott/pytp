@@ -557,6 +557,9 @@ class TapeOperations:
         # Check if the drive is ready
         if not self.is_tape_ready():
             return "The tape drive is not ready."
+        
+        # Ensure fixed block mode for seek operations
+        self.ensure_fixed_block_mode()
 
         status_output = self.run_command(["seek", str(block)])
         position = self.show_tape_position()
@@ -600,6 +603,50 @@ class TapeOperations:
         return self.run_command(["rewind"])
 
 
+    def ensure_fixed_block_mode(self):
+        """
+        Ensures the tape drive is in fixed block mode with the configured block size.
+        
+        This method should be called before any tape read or write operation to ensure
+        the drive is not in variable block mode (block size 0), which can cause reads
+        to fail or return empty results.
+        
+        Returns:
+            bool: True if block size is set correctly, False otherwise
+        """
+        try:
+            # Check current block size
+            result = subprocess.run(['mt', '-f', self.device_path, 'status'], 
+                                  capture_output=True, text=True, timeout=5)
+            
+            if result.returncode == 0:
+                # Look for block size in status output
+                for line in result.stdout.split('\n'):
+                    if 'Tape block size' in line:
+                        # Extract block size from line like "Tape block size 524288 bytes."
+                        import re
+                        match = re.search(r'Tape block size (\d+) bytes', line)
+                        if match:
+                            current_block_size = int(match.group(1))
+                            if current_block_size != self.block_size:
+                                # Block size is wrong, set it
+                                typer.echo(f"Block size is {current_block_size}, setting to {self.block_size}...")
+                                init_result = self.init()
+                                if "Error" not in str(init_result):
+                                    return True
+                                else:
+                                    typer.echo(f"Warning: Could not set block size: {init_result}")
+                                    return False
+                            else:
+                                # Block size is already correct
+                                return True
+        except Exception as e:
+            typer.echo(f"Warning: Could not check block size: {e}")
+            # Try to set it anyway
+            self.init()
+        
+        return True
+    
     def init(self):
         """
         Initializes the tape drive by setting the block size.
@@ -722,6 +769,10 @@ class TapeOperations:
         if not self.is_tape_ready():
             typer.echo("The tape drive is not ready.")
             return ""
+        
+        # Ensure tape drive is in fixed block mode before reading
+        # Variable block mode (0) can cause reads to fail or return empty
+        self.ensure_fixed_block_mode()
 
         command = ["tar", "-b", str(self.block_size), "-tvf", self.device_path]
         process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
@@ -812,6 +863,9 @@ class TapeOperations:
         # Check if the drive is ready
         if not self.is_tape_ready():
             return "The tape drive is not ready."
+        
+        # Ensure tape drive is in fixed block mode before reading
+        self.ensure_fixed_block_mode()
 
         # Create the target directory if it does not exist
         if not os.path.exists(target_dir):
