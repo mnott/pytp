@@ -151,4 +151,94 @@ class ConfigManager:
         else:
             # Return the default library details if no name is provided
             return self.config.get('tape_libraries', [{}])[0]
+    
+    def get_library_name(self, requested_name=None):
+        """
+        Get the library name using smart selection logic:
+        1. If requested_name is provided, use it (fail if not configured)
+        2. If not provided, use first library in config (fail if none configured)
+        
+        Args:
+            requested_name (str, optional): Explicitly requested library name
+            
+        Returns:
+            str: The library name to use
+            
+        Raises:
+            ValueError: If requested library doesn't exist or no libraries configured
+        """
+        libraries = self.config.get('tape_libraries', [])
+        
+        if requested_name:
+            # Case 1: Explicit library requested - must exist
+            for library in libraries:
+                if library['name'] == requested_name:
+                    return requested_name
+            raise ValueError(f"Library '{requested_name}' not found in configuration")
+        elif libraries:
+            # Case 2: Use first configured library
+            return libraries[0]['name']
+        else:
+            # Case 3: No libraries configured - fail
+            raise ValueError("No tape libraries configured")
+    
+    def display_config(self):
+        """
+        Display the current configuration in a human-readable format using Rich tables.
+        """
+        from rich.console import Console
+        from rich.table import Table
+        from rich.panel import Panel
+        from rich.columns import Columns
+        
+        console = Console()
+        
+        # Main directories
+        dirs_table = Table(title="📁 Directories", show_header=True, header_style="bold blue")
+        dirs_table.add_column("Setting", style="cyan", width=15)
+        dirs_table.add_column("Path", style="white")
+        
+        dirs_table.add_row("Tar Directory", self.get_tar_dir())
+        dirs_table.add_row("Snapshot Directory", self.get_snapshot_dir())
+        
+        # Tape Drives
+        drives_table = Table(title="🎬 Tape Drives", show_header=True, header_style="bold green")
+        drives_table.add_column("Name", style="cyan", width=8)
+        drives_table.add_column("Device Path", style="white", width=12)
+        drives_table.add_column("Block Size", justify="right", style="yellow", width=10)
+        
+        for drive in self.config.get('tape_drives', []):
+            block_size = f"{drive.get('block_size', 0):,}" if drive.get('block_size') else "0"
+            drives_table.add_row(
+                drive.get('name', 'Unknown'),
+                drive.get('device_path', 'Unknown'),
+                block_size
+            )
+        
+        # Tape Libraries
+        libraries_table = Table(title="📚 Tape Libraries", show_header=True, header_style="bold magenta")
+        libraries_table.add_column("Name", style="cyan", width=10)
+        libraries_table.add_column("Device Path", style="white", width=12)
+        libraries_table.add_column("Slots", justify="right", style="yellow", width=6)
+        libraries_table.add_column("Drives", style="green")
+        
+        for library in self.config.get('tape_libraries', []):
+            drives_str = ", ".join(library.get('drives', []))
+            libraries_table.add_row(
+                library.get('name', 'Unknown'),
+                library.get('device_path', 'Unknown'),
+                str(library.get('slots', 0)),
+                drives_str
+            )
+        
+        # Display all tables
+        console.print("\n")
+        console.print(Panel.fit("🔧 PYTP Configuration", style="bold white on blue"))
+        console.print("")
+        console.print(dirs_table)
+        console.print("")
+        console.print(drives_table)
+        console.print("")
+        console.print(libraries_table)
+        console.print("")
         

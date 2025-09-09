@@ -139,7 +139,7 @@ class TapeOperations:
         return False  # Default to not ready if none of the conditions match
 
 
-    def show_tape_status(self, verbose: bool = False):
+    def show_tape_status(self, verbose: bool = False, library_name: str = None):
         """
         Retrieves and returns the current status and position of the tape in the tape drive.
 
@@ -151,6 +151,7 @@ class TapeOperations:
 
         Args:
             verbose (bool): If True, shows the actual commands being executed.
+            library_name (str): Optional library name for smart detection.
 
         Returns:
             str: A string containing the combined output of the 'mt status' and 'mt tell' commands,
@@ -212,6 +213,33 @@ class TapeOperations:
                                 stats[key] = int(val)
                             else:
                                 stats[key] = val
+                
+                # Try to get tape label and slot information using smart detection
+                tape_label = None
+                slot_number = None
+                library_used = None
+                try:
+                    from pytp.tape_library_operations import TapeLibraryOperations
+                    from pytp.config_manager import ConfigManager
+                    
+                    config_manager = ConfigManager()
+                    actual_library_name = config_manager.get_library_name(library_name)
+                    library_used = actual_library_name
+                    
+                    if actual_library_name:
+                        tlo = TapeLibraryOperations(actual_library_name)
+                        tape_label = tlo.get_tape_label_from_drive(device_path=self.device_path)
+                        
+                        # Get slot number from library status
+                        library_status = tlo.list_tapes()
+                        for drive_num, drive_info in library_status['drives'].items():
+                            if drive_info.get('name') == self.drive_name:
+                                slot_number = drive_info.get('slot_loaded')
+                                break
+                except Exception as e:
+                    # Silently ignore - no library available or other error
+                    if verbose:
+                        typer.echo(f"Note: Could not get library info: {e}")
                 
                 if stats:
                     # Create Rich table without show_lines
@@ -307,7 +335,18 @@ class TapeOperations:
                     # Add section break
                     table.add_section()
                     
+                    # Add tape information if available
+                    if tape_label or slot_number or library_used:
+                        table.add_section()
+                        if library_used:
+                            table.add_row("Library Information", "Library", library_used)
+                        if tape_label:
+                            table.add_row("Tape Information", "Label", tape_label)
+                        if slot_number:
+                            table.add_row("", "Source slot", str(slot_number))
+                    
                     # Add current position info to table
+                    table.add_section()
                     if file_match and block_match:
                         file_number = file_match.group(1)
                         block_number = block_match.group(1)

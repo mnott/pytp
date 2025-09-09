@@ -427,6 +427,7 @@ def init(
 @app.command()
 def status(
     drive_name: str = typer.Option(os.environ.get('PYTP_DEV', 'lto9'), "--drive", "-d", help="Name of the tape drive"),
+    library_name: str = typer.Option(None, "--library", "-l", help="Name of the tape library (optional)"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Show verbose output including actual commands executed"),
 ) -> None:
     """
@@ -434,16 +435,18 @@ def status(
 
     This function creates an instance of the TapeOperations class and invokes its
     'show_tape_status' method to retrieve and display the current status of the tape drive.
-    This includes information like the tape's position, online/offline status, and other
-    relevant details.
+    This includes information like the tape's position, online/offline status, and if a tape
+    library is configured, also shows the tape label and source slot automatically.
 
     Args:
         drive_name (str): The name of the tape drive to be initialized. This name is used
                           to fetch the drive's configuration details. The default value is taken
                           from the environment variable 'PYTP_DEV' or defaults to 'lto9'.
+        library_name (str): Optional library name. If not provided, uses first configured library
+                           or 'msl2024' as fallback.
         verbose (bool): If True, shows the actual commands being executed.
     """
-    result = TapeOperations(drive_name).show_tape_status(verbose=verbose)
+    result = TapeOperations(drive_name).show_tape_status(verbose=verbose, library_name=library_name)
     typer.echo(result)
 
 # Alias for the status command
@@ -745,12 +748,23 @@ app.command(name="v")(verify)
 #
 @app.command()
 def list(
-    library_name: str = typer.Option(os.environ.get('PYTP_LIB', 'msl2024'), "--library", "-l", help="Name of the tape drive"),
+    library_name: str = typer.Option(None, "--library", "-l", help="Name of the tape library (optional)"),
 ):
     """Lists the tapes in the tape library"""
-    tlo = TapeLibraryOperations(library_name)
-    tape_library_contents = tlo.list_tapes()
-    tlo.print_tape_library_output(tape_library_contents)
+    try:
+        from pytp.config_manager import ConfigManager
+        config_manager = ConfigManager()
+        actual_library_name = config_manager.get_library_name(library_name)
+        
+        tlo = TapeLibraryOperations(actual_library_name)
+        tape_library_contents = tlo.list_tapes()
+        tlo.print_tape_library_output(tape_library_contents)
+    except ValueError as e:
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(1)
+    except Exception as e:
+        typer.echo(f"Error accessing library '{actual_library_name if 'actual_library_name' in locals() else library_name}': {e}", err=True)
+        raise typer.Exit(1)
 
 
 #
@@ -758,14 +772,25 @@ def list(
 #
 @app.command()
 def load(
-    library_name: str = typer.Option(os.environ.get('PYTP_LIB', 'msl2024'), "--library", "-l", help="Name of the tape drive"),
+    library_name: str = typer.Option(None, "--library", "-l", help="Name of the tape library (optional)"),
     drive_name  : str = typer.Option(os.environ.get('PYTP_DEV', 'lto9'), "--drive", "-d", help="Name of the tape drive"),
     slot_number : int = typer.Argument(..., help="Slot number to load")
 ):
     """Loads a tape into the tape drive"""
-    tlo = TapeLibraryOperations(library_name)
-    result = tlo.load_tape(drive_name, slot_number)
-    typer.echo(result)
+    try:
+        from pytp.config_manager import ConfigManager
+        config_manager = ConfigManager()
+        actual_library_name = config_manager.get_library_name(library_name)
+        
+        tlo = TapeLibraryOperations(actual_library_name)
+        result = tlo.load_tape(drive_name, slot_number)
+        typer.echo(result)
+    except ValueError as e:
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(1)
+    except Exception as e:
+        typer.echo(f"Error accessing library: {e}", err=True)
+        raise typer.Exit(1)
 
 
 #
@@ -773,14 +798,25 @@ def load(
 #
 @app.command()
 def unload(
-    library_name: str = typer.Option(os.environ.get('PYTP_LIB', 'msl2024'), "--library", "-l", help="Name of the tape drive"),
+    library_name: str = typer.Option(None, "--library", "-l", help="Name of the tape library (optional)"),
     drive_name  : str = typer.Option(os.environ.get('PYTP_DEV', 'lto9'), "--drive", "-d", help="Name of the tape drive"),
-    slot_number : int = typer.Argument(None, help="Slot number to unload into, defaut: original slot")
+    slot_number : int = typer.Argument(None, help="Slot number to unload into, default: original slot")
 ):
     """Unloads a tape from the tape drive"""
-    tlo = TapeLibraryOperations(library_name)
-    result = tlo.unload_tape(drive_name, slot_number)
-    typer.echo(result)
+    try:
+        from pytp.config_manager import ConfigManager
+        config_manager = ConfigManager()
+        actual_library_name = config_manager.get_library_name(library_name)
+        
+        tlo = TapeLibraryOperations(actual_library_name)
+        result = tlo.unload_tape(drive_name, slot_number)
+        typer.echo(result)
+    except ValueError as e:
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(1)
+    except Exception as e:
+        typer.echo(f"Error accessing library: {e}", err=True)
+        raise typer.Exit(1)
 
 
 #
@@ -788,15 +824,41 @@ def unload(
 #
 @app.command()
 def move(
-    library_name: str = typer.Option(os.environ.get('PYTP_LIB', 'msl2024'), "--library", "-l", help="Name of the tape drive"),
+    library_name: str = typer.Option(None, "--library", "-l", help="Name of the tape library (optional)"),
     from_slot: str = typer.Argument(..., help="Slot to move from"),
     to_slot  : str = typer.Argument(..., help="Slot to move to"),
 ):
     """Moves a tape from one slot to another"""
-    tlo = TapeLibraryOperations(library_name)
-    result = tlo.move_tape(from_slot, to_slot)
-    typer.echo(result)
+    try:
+        from pytp.config_manager import ConfigManager
+        config_manager = ConfigManager()
+        actual_library_name = config_manager.get_library_name(library_name)
+        
+        tlo = TapeLibraryOperations(actual_library_name)
+        result = tlo.move_tape(from_slot, to_slot)
+        typer.echo(result)
+    except ValueError as e:
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(1)
+    except Exception as e:
+        typer.echo(f"Error accessing library: {e}", err=True)
+        raise typer.Exit(1)
 
+
+
+#
+# Command: Config
+#
+@app.command()
+def config():
+    """
+    Display the current pytp configuration in a human-readable format.
+    
+    Shows configured tape drives, libraries, and directory settings.
+    """
+    from pytp.config_manager import ConfigManager
+    config_manager = ConfigManager()
+    config_manager.display_config()
 
 
 #
