@@ -546,11 +546,24 @@ class TapeBackup:
                 log_file.write(f"Command: {backup_command}\n")
                 log_file.flush()
             
-            # Execute the backup command
-            process = subprocess.Popen(backup_command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            # Execute the backup command with better error capture
+            # Create separate error logs for tar and mbuffer
+            tar_error_log_path = os.path.join(self.tar_dir, f"tar_errors_{timestamp_str}_{directory.replace('/', '_')}.log")
+            mbuffer_error_log_path = os.path.join(self.tar_dir, f"mbuffer_errors_{timestamp_str}_{directory.replace('/', '_')}.log")
+            
+            # Execute backup with separate stderr capture for debugging
+            # We'll capture all stderr to a file for post-mortem analysis
+            stderr_capture_path = os.path.join(self.tar_dir, f"stderr_{timestamp_str}_{directory.replace('/', '_')}.log")
+            with open(stderr_capture_path, 'w') as stderr_file:
+                # Modified command to capture tar stderr separately
+                enhanced_command = f"({backup_command}) 2>&1 | tee -a {stderr_capture_path}"
+                process = subprocess.Popen(backup_command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            
             mbuffer_summary = None
             captured_output = []
             error_messages = []
+            tar_errors = []
+            mbuffer_errors = []
             file_count = 0
             
             # Open a separate file list log for this directory with timestamp
@@ -593,12 +606,21 @@ class TapeBackup:
                         # Capture all output for logging
                         captured_output.append(line)
                         
-                        # Detect and capture actual error messages (not filenames containing error words)
-                        # Only flag lines that start with tar: or contain actual error indicators
-                        if (line.startswith('tar:') and any(err_word in line.lower() for err_word in ['error', 'warning', 'failed', 'cannot', 'permission denied'])) or \
-                           ('permission denied' in line.lower()) or \
-                           (line.startswith('./') == False and line.startswith('/') == False and any(err_word in line.lower() for err_word in ['error', 'failed', 'cannot access'])):
-                            error_messages.append(line.strip())
+                        # Enhanced error detection - separate tar and mbuffer errors
+                        if line.startswith('tar:'):
+                            # This is a tar error/warning
+                            tar_errors.append(line.strip())
+                            error_messages.append(f"[TAR] {line.strip()}")
+                        elif 'mbuffer:' in line or line.startswith('mbuffer'):
+                            # This is an mbuffer error
+                            mbuffer_errors.append(line.strip())
+                            error_messages.append(f"[MBUFFER] {line.strip()}")
+                        elif 'permission denied' in line.lower():
+                            error_messages.append(f"[PERMISSION] {line.strip()}")
+                        elif stream_name == 'stderr' and not line.startswith('./') and not line.startswith('/'):
+                            # Any other stderr output that's not a file path
+                            if any(err_word in line.lower() for err_word in ['error', 'failed', 'cannot', 'broken pipe', 'terminated']):
+                                error_messages.append(f"[STDERR] {line.strip()}")
                         
                         # Log files being backed up (tar verbose output shows files)
                         if line.startswith('./') or (line.startswith('/') and not line.startswith('in @')):
@@ -690,16 +712,55 @@ class TapeBackup:
                             log_file.write(f"MBuffer stats: {mbuffer_summary}\n")
                         else:
                             log_file.write(f"WARNING: No mbuffer summary captured - process may have terminated abnormally\n")
+                        
+                        # Enhanced error reporting
+                        if tar_errors:
+                            log_file.write(f"\nTAR ERRORS ({len(tar_errors)}):\n")
+                            for error_msg in tar_errors:
+                                log_file.write(f"  {error_msg}\n")
+                        
+                        if mbuffer_errors:
+                            log_file.write(f"\nMBUFFER ERRORS ({len(mbuffer_errors)}):\n")
+                            for error_msg in mbuffer_errors:
+                                log_file.write(f"  {error_msg}\n")
+                        
                         if error_messages:
-                            log_file.write(f"Errors/Warnings detected:\n")
+                            log_file.write(f"\nALL ERRORS/WARNINGS ({len(error_messages)}):\n")
                             for error_msg in error_messages:
                                 log_file.write(f"  {error_msg}\n")
+                        
+                        # Save stderr capture for debugging
+                        log_file.write(f"\nFull stderr capture saved to: {stderr_capture_path}\n")
                         if process.returncode != 0:
-                            log_file.write(f"ERROR: Backup failed with code {process.returncode}\n")
-                            # Log last 10 lines of output for debugging
-                            log_file.write("Last output lines:\n")
-                            for output_line in captured_output[-10:]:
+                            log_file.write(f"\nERROR: Backup failed with code {process.returncode}\n")
+                            
+                            # Analyze the failure
+                            if process.returncode == 1:
+                                log_file.write("Return code 1 typically indicates:\n")
+                                log_file.write("  - Files changed while being read\n")
+                                log_file.write("  - Some files could not be read\n")
+                                log_file.write("  - Non-fatal errors occurred\n")
+                            elif process.returncode == 2:
+                                log_file.write("Return code 2 indicates fatal errors\n")
+                            elif process.returncode > 128:
+                                signal_num = process.returncode - 128
+                                log_file.write(f"Process terminated by signal {signal_num}\n")
+                                if signal_num == 13:
+                                    log_file.write("  Signal 13 (SIGPIPE) - pipe broken, mbuffer may have crashed\n")
+                            
+                            # Log last 20 lines of output for debugging
+                            log_file.write("\nLast output lines before failure:\n")
+                            for output_line in captured_output[-20:]:
                                 log_file.write(f"  {output_line}")
+                            
+                            # Check for specific failure patterns
+                            last_output = ''.join(captured_output[-50:])
+                            if 'broken pipe' in last_output.lower():
+                                log_file.write("\n⚠️  BROKEN PIPE detected - mbuffer likely crashed\n")
+                            if 'no space left' in last_output.lower():
+                                log_file.write("\n⚠️  NO SPACE LEFT - check tape capacity or temp directory\n")
+                            if 'i/o error' in last_output.lower():
+                                log_file.write("\n⚠️  I/O ERROR - tape drive may have issues\n")
                         
                         # Update initial_diagnostics for next iteration
                         initial_diagnostics = dir_end_diagnostics
@@ -720,7 +781,14 @@ class TapeBackup:
                         print(f"   ⚠️  WARNING: No mbuffer summary - check for errors!")
                 
                     if process.returncode != 0:
-                        typer.echo(f"Error occurred during backup of {directory}. Error code: {process.returncode}")
+                        typer.echo(f"\n⚠️  Error occurred during backup of {directory}. Error code: {process.returncode}")
+                        # Capture tape diagnostics at failure point
+                        failure_diagnostics = self.get_tape_diagnostics()
+                        with open(backup_log_path, 'a') as log_file:
+                            log_file.write(f"\n--- TAPE DIAGNOSTICS AT FAILURE ---\n")
+                            log_file.write(self.format_diagnostics(failure_diagnostics))
+                            log_file.write(f"\n")
+                            log_file.flush()
                         continue
                 except Exception as e:
                     typer.echo(f"Error occurred during backup of {directory}: {e}")
@@ -766,7 +834,7 @@ class TapeBackup:
                 throughput_mbs = job['data_bytes'] / (1024*1024) / job['duration_seconds'] if job['duration_seconds'] > 0 else 0
                 volume_gbh = job['data_bytes'] / (1024*1024*1024) / job['duration_hours'] if job['duration_hours'] > 0 else 0
                 files_ph = job['files'] / job['duration_hours'] if job['duration_hours'] > 0 else 0
-                error_count = len(job['error_messages'])
+                error_count = len([msg for msg in job['error_messages'] if not msg.startswith('[TAR]') or 'error' in msg.lower()])
                 
                 log_file.write(f"{dir_short:<30} {job['status']:<8} {job['files']:<10,} "
                               f"{self.format_bytes(job['data_bytes']):<12} "
@@ -825,7 +893,7 @@ class TapeBackup:
             throughput_mbs = job['data_bytes'] / (1024*1024) / job['duration_seconds'] if job['duration_seconds'] > 0 else 0
             volume_gbh = job['data_bytes'] / (1024*1024*1024) / job['duration_hours'] if job['duration_hours'] > 0 else 0
             files_ph = job['files'] / job['duration_hours'] if job['duration_hours'] > 0 else 0
-            error_count = len(job['error_messages'])
+            error_count = len([msg for msg in job['error_messages'] if not msg.startswith('[TAR]') or 'error' in msg.lower()])
             
             print(f"{dir_short:<30} {job['status']:<8} {job['files']:<10,} "
                   f"{self.format_bytes(job['data_bytes']):<12} "
