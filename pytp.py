@@ -11,8 +11,12 @@ PyTP is a comprehensive Python-based CLI utility for tape backup operations. It'
 - **Backup and Restore**: Supports backup and restoration of directories and files directly to and from tape drives.
 - **Tape Operations**: Includes a variety of tape operations such as rewinding, setting tape positions, listing files on tape, etc.
 - **Flexible Backup Strategies**: Offers different backup strategies (direct, tar, dd) for optimal performance based on the user's needs.
+- **Smart Library Detection**: Automatically detects and uses configured tape libraries without manual specification.
+- **Enhanced Status Display**: Shows comprehensive tape drive status including label, slot, and library information.
+- **Automatic Block Size Management**: Ensures tape drives are always in fixed block mode for reliable operations.
+- **Rich Error Reporting**: Detailed error capture and analysis for backup operations with separate tar/mbuffer error tracking.
 - **CLI Interface**: Easy-to-use command-line interface for all tape operations.
-- **Configurable**: Customizable settings through JSON configuration files.
+- **Configurable**: Customizable settings through JSON configuration files with human-readable config display.
 
 ## Sample CLI Calls
 
@@ -109,6 +113,20 @@ backup for a given label, the previous snapshot file will be overwritten
   pytp ls --drive lto9
   ```
 
+- Show comprehensive tape drive status (includes tape label and slot if using library):
+
+  ```bash
+  pytp status --drive lto9
+  pytp status --drive lto9 --library msl2024  # Explicitly specify library
+  pytp status --verbose                        # Show additional diagnostic info
+  ```
+
+- Display current configuration in human-readable format:
+
+  ```bash
+  pytp config
+  ```
+
 - Restore files from tape:
 
   ```bash
@@ -117,32 +135,38 @@ backup for a given label, the previous snapshot file will be overwritten
 
 ### Tape Library Operations
 
-- List the content of the library
+PyTP features smart library detection - it automatically uses the first configured library, or you can specify one explicitly. Library commands will fail gracefully if no library is configured.
+
+- List the content of the library (auto-detects configured library):
 
   ```bash
-  pytp list
+  pytp list                          # Uses first configured library
+  pytp list --library msl2024        # Explicitly specify library
   ```
 
-- Load a tape from slot 2 into a given tape
+- Load a tape from slot 2 into a given tape:
 
   ```bash
-  pytp load --drive lto9 2
+  pytp load --drive lto9 2           # Auto-detects library
+  pytp load --library msl2024 --drive lto9 2  # Explicit library
   ```
 
-- Unload a tape from a given tape to a given slot
+- Unload a tape from a given tape to a given slot:
 
   ```bash
-  pytp unload --drive lto9 2
+  pytp unload --drive lto9 2         # Auto-detects library
+  pytp unload --drive lto9           # Unload to original slot
   ```
 
 If you do not specify the target slot (2 in this case), the tape library
 will try to use the slot it thinks the tape was loaded from. If you did
 some wild moves, this may go wrong.
 
-- Move a tape from one slot to another
+- Move a tape from one slot to another:
 
   ```bash
-  pytp move 2 3
+  pytp move 2 3                      # Auto-detects library
+  pytp move --library msl2024 2 3    # Explicit library
   ```
 
 ## Tape Retension
@@ -181,6 +205,46 @@ On Linux systems, the native `mt retension` command is often a no-op (unlike Fre
 3. Rewinding tape back to beginning
 
 This ensures proper tape tensioning regardless of the underlying mt command behavior.
+
+## Enhanced Features
+
+### Smart Library Detection
+
+PyTP automatically detects and uses configured tape libraries:
+
+1. **Auto-detection**: If no `-l/--library` parameter is provided, uses the first configured library
+2. **Explicit selection**: Use `-l library_name` to specify a particular library
+3. **Error handling**: Commands fail gracefully with clear messages if library doesn't exist
+4. **Status integration**: Status command shows which library is being used
+
+### Enhanced Status Display
+
+The `pytp status` command provides comprehensive information:
+
+- **Tape drive statistics**: Volume stats, error counts, compression ratios
+- **Current position**: File number, block number, block size
+- **Library information**: Which library is being used (if multiple configured)
+- **Tape information**: Tape label/barcode and source slot number
+- **Busy detection**: When drive is busy, shows what process is using it
+
+### Automatic Block Size Management
+
+PyTP ensures reliable tape operations by:
+
+- **Auto-initialization**: Automatically sets fixed block mode before tape operations
+- **Block size validation**: Checks and corrects block size settings automatically
+- **Variable mode prevention**: Prevents unreliable variable block mode (block size 0)
+- **Seamless operation**: Works transparently - no user intervention needed
+
+### Enhanced Error Reporting
+
+Backup operations now feature detailed error tracking:
+
+- **Separate error streams**: Distinguishes between TAR errors and MBUFFER errors
+- **Error classification**: Tags errors as `[TAR]`, `[MBUFFER]`, `[PERMISSION]`, etc.
+- **Failure analysis**: Explains what different return codes mean
+- **Pattern detection**: Identifies common failure patterns (broken pipe, I/O errors, etc.)
+- **Tape diagnostics**: Captures tape drive state at failure points
 
 ## Backup Strategies
 
