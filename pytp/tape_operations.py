@@ -419,11 +419,22 @@ class TapeOperations:
             # Get detailed command line for the main process
             main_process = processes[0]
             try:
-                ps_result = subprocess.run(['ps', '-p', main_process['pid'], '-o', 'args', '--no-headers'], 
-                                         capture_output=True, text=True, timeout=2)
-                full_command = ps_result.stdout.strip() if ps_result.returncode == 0 else "Unknown command"
+                # Try to get full command from /proc/{pid}/cmdline first
+                with open(f'/proc/{main_process["pid"]}/cmdline', 'r') as f:
+                    full_command = f.read().replace('\0', ' ').strip()
+                if not full_command:
+                    # Fallback to ps command
+                    ps_result = subprocess.run(['ps', '-p', main_process['pid'], '-o', 'args', '--no-headers'], 
+                                             capture_output=True, text=True, timeout=2)
+                    full_command = ps_result.stdout.strip() if ps_result.returncode == 0 else "Unknown command"
             except:
-                full_command = f"{main_process['cmd']} (PID {main_process['pid']})"
+                try:
+                    # Second fallback to ps command
+                    ps_result = subprocess.run(['ps', '-p', main_process['pid'], '-o', 'args', '--no-headers'], 
+                                             capture_output=True, text=True, timeout=2)
+                    full_command = ps_result.stdout.strip() if ps_result.returncode == 0 else "Unknown command"
+                except:
+                    full_command = f"{main_process['cmd']} (PID {main_process['pid']})"
             
             # Create a rich table for busy status
             table = Table(title="📼 TAPE DRIVE STATUS: BUSY", 
@@ -470,6 +481,9 @@ class TapeOperations:
             table.add_row("Process", f"{main_process['cmd']} (PID {main_process['pid']})")
             table.add_row("User", main_process['user'])
             table.add_row("Access Mode", main_process['mode'])
+            
+            # Always show the full command
+            table.add_row("Full Command", full_command)
             
             if len(processes) > 1:
                 table.add_row("Additional Processes", f"{len(processes)-1} related processes")
@@ -642,49 +656,67 @@ class TapeOperations:
         return self.run_command(["rewind"])
 
 
-    def ensure_fixed_block_mode(self):
+    def enforce_block_size(self, verbose=False):
         """
-        Ensures the tape drive is in fixed block mode with the configured block size.
+        ALWAYS enforces the configured block size before ANY tape operation.
         
-        This method should be called before any tape read or write operation to ensure
-        the drive is not in variable block mode (block size 0), which can cause reads
-        to fail or return empty results.
+        This method is called automatically before every tape operation to ensure
+        consistency. It will ALWAYS set the block size to the configured value,
+        regardless of current state.
+        
+        Args:
+            verbose (bool): If True, prints status messages. Default False for silent operation.
         
         Returns:
-            bool: True if block size is set correctly, False otherwise
+            bool: True if block size was set successfully, False otherwise
         """
         try:
-            # Check current block size
-            result = subprocess.run(['mt', '-f', self.device_path, 'status'], 
-                                  capture_output=True, text=True, timeout=5)
+            # ALWAYS set the block size to the configured value - no checking, no exceptions
+            result = subprocess.run(
+                ['mt', '-f', self.device_path, 'setblk', str(self.block_size)], 
+                capture_output=True, 
+                text=True, 
+                timeout=10
+            )
             
             if result.returncode == 0:
-                # Look for block size in status output
-                for line in result.stdout.split('\n'):
-                    if 'Tape block size' in line:
-                        # Extract block size from line like "Tape block size 524288 bytes."
-                        import re
-                        match = re.search(r'Tape block size (\d+) bytes', line)
-                        if match:
-                            current_block_size = int(match.group(1))
-                            if current_block_size != self.block_size:
-                                # Block size is wrong, set it
-                                typer.echo(f"Block size is {current_block_size}, setting to {self.block_size}...")
-                                init_result = self.init()
-                                if "Error" not in str(init_result):
-                                    return True
-                                else:
-                                    typer.echo(f"Warning: Could not set block size: {init_result}")
-                                    return False
-                            else:
-                                # Block size is already correct
-                                return True
+                # Verify it was set correctly
+                verify_result = subprocess.run(
+                    ['mt', '-f', self.device_path, 'status'], 
+                    capture_output=True, 
+                    text=True, 
+                    timeout=5
+                )
+                
+                if verify_result.returncode == 0:
+                    import re
+                    match = re.search(r'Tape block size (\d+) bytes', verify_result.stdout)
+                    if match:
+                        actual_size = int(match.group(1))
+                        if actual_size == self.block_size:
+                            return True
+                        else:
+                            if verbose:
+                                typer.echo(f"ERROR: Block size verification failed. Expected {self.block_size}, got {actual_size}")
+                            return False
+                
+                # If verification failed but set command succeeded, assume it worked
+                return True
+            else:
+                if verbose:
+                    typer.echo(f"ERROR: Failed to set block size: {result.stderr}")
+                return False
+                
         except Exception as e:
-            typer.echo(f"Warning: Could not check block size: {e}")
-            # Try to set it anyway
-            self.init()
-        
-        return True
+            if verbose:
+                typer.echo(f"ERROR: Exception while setting block size: {e}")
+            return False
+
+    def ensure_fixed_block_mode(self):
+        """
+        Legacy method - now just calls enforce_block_size()
+        """
+        return self.enforce_block_size()
     
     def init(self):
         """
@@ -717,8 +749,11 @@ class TapeOperations:
         if not self.is_tape_ready():
             return "The tape drive is not ready."
 
-        # Set the block size (no rewind needed - just configure the drive)
-        return self.run_command(["setblk", str(self.block_size)])
+        # Use the robust block size enforcement
+        if self.enforce_block_size():
+            return f"Tape drive initialized with block size {self.block_size}"
+        else:
+            return "Error: Failed to set block size"
 
 
     def skip_file_markers(self, count: int, verbose: bool = True):
@@ -809,9 +844,10 @@ class TapeOperations:
             typer.echo("The tape drive is not ready.")
             return ""
         
-        # Ensure tape drive is in fixed block mode before reading
-        # Variable block mode (0) can cause reads to fail or return empty
-        self.ensure_fixed_block_mode()
+        # ALWAYS enforce the configured block size before reading (silent)
+        if not self.enforce_block_size(verbose=False):
+            typer.echo("ERROR: Could not set block size. Aborting.")
+            return ""
 
         command = ["tar", "-b", str(self.block_size), "-tvf", self.device_path]
         process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
@@ -822,15 +858,29 @@ class TapeOperations:
                 print(line, end='')  # Print each line immediately
                 line_count += 1
                 if sample and line_count >= sample:
-                    self.skip_file_markers(-1, False)
-                    break  # Stop after printing the specified number of sample lines
+                    # Terminate the tar process after getting enough files
+                    process.terminate()
+                    # Wait for it to finish
+                    try:
+                        process.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        process.wait()
+                    break
                     
         except Exception as e:
             print(f"Error while reading tape: {e}")
         finally:
-            process.stdout.close()
+            # Close stdout if it's still open
+            if process.stdout and not process.stdout.closed:
+                process.stdout.close()
+            
+            # Only advance tape position for full (non-sample) listings
             if not sample:
+                # For full listings, advance to next archive
                 self.skip_file_markers(1, False)
+            # For samples within the same archive, we can't easily reposition
+            # The user will need to rewind manually if they want to start over
 
 
     def backup_directories(self, directories: list, library_name = None, label = None, job = None, strategy="direct", incremental=False, max_concurrent_tars: int = 2, memory_buffer = 16, memory_buffer_percent = 20, use_double_buffer = True, low_water_mark = 10):
@@ -864,13 +914,12 @@ class TapeOperations:
         if not self.is_tape_ready():
             return "The tape drive is not ready."
         
-        # Initialize tape drive block size for optimal performance
-        # This ensures the drive is in fixed block mode matching our configured block size
-        init_result = self.init()
-        if "Error" in str(init_result):
-            typer.echo(f"Warning: Could not set block size: {init_result}")
+        # ALWAYS enforce the configured block size before backup
+        if not self.enforce_block_size(verbose=True):
+            typer.echo("ERROR: Could not set block size. Backup aborted.")
+            return "ERROR: Block size enforcement failed"
         else:
-            typer.echo(f"Tape initialized with block size: {self.block_size} bytes")
+            typer.echo(f"Tape configured with block size: {self.block_size} bytes")
 
         tape_backup = TapeBackup(self, self.device_path, self.block_size, self.tar_dir, self.snapshot_dir, library_name, label, job, strategy, incremental, max_concurrent_tars, memory_buffer, memory_buffer_percent, use_double_buffer, low_water_mark)
 
@@ -903,8 +952,10 @@ class TapeOperations:
         if not self.is_tape_ready():
             return "The tape drive is not ready."
         
-        # Ensure tape drive is in fixed block mode before reading
-        self.ensure_fixed_block_mode()
+        # ALWAYS enforce the configured block size before restore
+        if not self.enforce_block_size(verbose=True):
+            typer.echo("ERROR: Could not set block size. Restore aborted.")
+            return "ERROR: Block size enforcement failed"
 
         # Create the target directory if it does not exist
         if not os.path.exists(target_dir):
