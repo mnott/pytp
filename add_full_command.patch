@@ -1,0 +1,24 @@
+--- a/pytp/tape_operations.py
++++ b/pytp/tape_operations.py
+@@ -169,6 +169,15 @@ class TapeOperations:
+             return "The tape drive is empty (no tape loaded)."
+         elif "Device or resource busy" in status_output:
+             # Enhanced: Show what process is using the tape
++            # Try to get the actual command being run
++            lsof_result = subprocess.run(['lsof', self.device_path], capture_output=True, text=True)
++            if lsof_result.stdout:
++                lines = lsof_result.stdout.strip().split('\n')
++                if len(lines) > 1:
++                    parts = lines[1].split()
++                    if len(parts) >= 2:
++                        pid = parts[1]
++                        # Get full command from /proc
++                        try:
++                            with open(f'/proc/{pid}/cmdline', 'r') as f:
++                                full_cmd = f.read().replace('\0', ' ').strip()
++                                return f"The tape drive is busy\nProcess: {full_cmd}"
++                        except:
++                            pass
+             return "The tape drive is busy"
+ 
+         status_output += block_position
